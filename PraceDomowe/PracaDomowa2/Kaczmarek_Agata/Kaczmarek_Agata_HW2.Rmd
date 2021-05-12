@@ -62,6 +62,10 @@ lime_phones54 <- predict_surrogate(explainer = explainer,
                                  n_permutations = 1000,
                                  type = "lime")
 plot(lime_phones54)
+
+explainer2<-lime(phones2[,-11], model)
+explanation<-explain(phones2[54,-11], explainer2, n_labels=1, n_features=3)
+
 ```
 
 Jak widać przy tej obserwacji za trzy najważniejsze zmienne LIME uznał *ram_gb* (wartość większa niż 6), *width_px* (wartość większa niż 1080) oraz *height_px* (wartość większa niż 2400). Wydają to się być dość sensowne założenia, w szczególności to dotyczące pamięci. Różnica między wpływem wartości szerokości oraz wysokości jest zastanawiąjąca, ponieważ są to dwie zmienne, które z przeprowadzonego wcześniej EDA okazały się mocno od siebie zależne, również miały wiele wspólnego z przekątną ekranu, która tutaj nie jest nawet w siedmiu najważniejszych zmiennych.
@@ -123,13 +127,18 @@ Co ciekawe jeśli *front_camera_mpix* ma wartość większą niż 16 lub mniejsz
 ```{r, fig.width=16, fig.height=8}
 #Break Down
 phones2_bd_54 <- predict_parts(explainer,
-                            new_observation = phones[54,])
+                            new_observation = phones2[54,])
 plot(phones2_bd_54)
 ```
 
 ```{r}
 
 plot(lime_phones54)
+```
+
+```{r}
+
+plot_features(explanation)
 ```
 
 Jak widać, pojawiły się pewne różnice między wyjaśnieniami z użyciem LIME oraz BreakDown. Różnice są nawet pomiędzy końcową predykcją, jednak nie są one aż tak znaczne (wartość podana przez Break Down stanowi 100.3% wartości przewiadzianej przez LIME). Większe różnice są natomiast w zmiennych, które LIME oraz BreakDown uznały za najistotniejsze. Dla BreakDown były to szerokość i wysokość ekranu, pamięć ram oraz brand, natomiast dla LIME pokrywały się pamięć ram,  szerokość i wysokość ekranu (w tej kolejności, jak widać innej niż w poprzedmin), jednak zamiast brand pojawiła się nazwa telefonu. Co ciekawe oba narzędzia uznały wartość *back_camera_mpix*=64 za wpływającą negatywnie na predykcję. Przy zmiennej *brand* nie były już takie zgodne - w przeciwieństwie do BreakDown, LIME uznał jej wpływ za negatywny.

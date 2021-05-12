@@ -1,0 +1,86 @@
+---
+title: "PD4"
+author: "Klaudia Gruszkowska"
+date: "28 04 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Model
+
+### Wczytanie przygotowanych danych i podział na zbiór testowy i treningowy
+```{r,message=FALSE}
+library('randomForest')
+library("ggplot2")
+
+cleaned_housing <- read.csv("cleaned_housing.csv")
+head(cleaned_housing)
+
+set.seed(1738)
+
+sample = sample.int(n = nrow(cleaned_housing), size = floor(.8*nrow(cleaned_housing)), replace = F)
+train = cleaned_housing[sample, ] 
+test  = cleaned_housing[-sample, ] 
+
+train_y = train[,'median_house_value']
+train_x = train[, names(train) !='median_house_value']
+```
+
+### Model lasu losowego
+```{r,message=FALSE}
+
+rf_model = randomForest(train_x, y = train_y , ntree = 500, importance = TRUE)
+
+```
+
+
+### Explainer
+```{r,message=FALSE}
+library(DALEX)
+library(DALEXtra)
+
+
+explainer <- DALEX::explain(model = rf_model,
+                     data = cleaned_housing[, -14],
+                     y = cleaned_housing[, 14], 
+                     colorize=FALSE,
+                     label = "Random Forest")
+```
+
+```{r,message=FALSE}
+fi_1 <- model_parts(explainer, B = 10)
+plot(fi_1)
+```
+
+Najważniejszą zmienną okazała się bez zaskoczeń zmienna median_income. Na kolejnych miejscach znajdują się zmienne longitude i latitude, których ważność wykazały też wcześniejsze analizy.
+
+### Model XGboost
+```{r,message=FALSE,warnings=FALSE}
+library(xgboost)
+
+
+xb_model <- xgboost(as.matrix(train_x), label = train$median_house_value,    
+                 nround = 50, 
+                 objective = 'reg:squarederror')  
+
+explainer_2 <- DALEX::explain(model = xb_model,
+                     data = as.matrix(cleaned_housing[, -14]),
+                     y = cleaned_housing[, 14], 
+                     colorize=FALSE)
+```
+
+```{r,message=FALSE}
+library("ggplot2")
+fi_2 <- model_parts(explainer_2, B = 10)
+plot(fi_2)
+```
+
+Najważniejsze zmienne w modelu xgboost to latitude, longitude i median_income. Są to te same zmienne co w modelu lasu losowego, jednak w tym wypadku są one w innej kolejności.Dodatkowo tak jak przy modelu lasu losowego zmienna ISLAND,zdaje się nie mieć wpływu na wynik. Z tego co wiemy dzięki wcześniejszej analizie w danych jest tylko 10 obserwacji, które dla tej zmiennej przyjmują wartość 1, reszta jest równa 0. Przy tak małej ilości tych obserwacji, staje się jasne jej pozycja na liście. Boxplot przy tej zmiennej pokazuje, że niektóre jej permutacje mogą nawet poprawić wynik modelu co wskazuje, że moglibyśmy ją wyrzucić z modelu.
+```{r}
+plot(fi_1,fi_2)
+```
+
+Porównanie, dwóch modeli pokazuje nam, że las losowy jest lepszym modelem, jeżeli chodzi o porównanie wartości RMSE.

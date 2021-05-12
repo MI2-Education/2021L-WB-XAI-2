@@ -1,0 +1,240 @@
+---
+title: "WB-XAI-2 - praca domowa 4"
+subtitle: "Mateusz Grzyb"
+output:
+  html_document:
+    df_print: paged
+---
+
+<br>
+
+![](https://static.turbosquid.com/Preview/2016/09/26__12_14_55/R0.pngE649D7B9-45F3-4207-B43D-8A06F77214CBLarge.jpg){width=25%}
+
+<br>
+
+## Wczytanie i obróbka danych
+
+Wczytane dane obrabiam w ten sam sposób, jak na poprzedniej pracy domowej.
+
+```{r message=FALSE}
+# wczytanie bibliotek
+library(OpenML)
+
+# wczytanie danych
+blood <- getOMLDataSet(data.id = 1464)
+blood <- blood$data
+
+# obrobka wstępna 
+row.names(blood) <- NULL
+names(blood) <- c('Recency', 'Frequency', 'Monetary', 'Time', 'Donated')
+blood$Donated <- factor(ifelse(blood$Donated==2, 1, 0))
+blood <- blood[-3]
+
+# dodanie zaproponowanej ostatnio zmiennej Intensity
+blood_m <- cbind(
+  blood[c('Recency', 'Frequency')],
+  Intensity=pmin(blood$Frequency/pmax(blood$Time-blood$Recency, 1), 1),
+  blood['Donated'])
+
+# podglad ramki danych
+head(blood_m)
+```
+
+## Przygotowanie modeli
+
+W tej pracy domowej chcemy przetestować metodę permutacyjnej ważności zmiennych dla kilku modeli różnych typów.
+
+W tym celu wybrałem pięć rodzajów modeli - ranger, xgboost, svm, kknn i lda. Części z nich zmieniam lekko paramatry na wartości, które znalazłem w serwisie OpenML.
+
+Zacznę od przygotowania dwóch funkcji. Pierwsza z nich posłuży tworzeniu modeli, a druga ich testowaniu.
+
+```{r message=FALSE, warning=FALSE}
+library(mlr)
+library(PRROC)
+
+classif_task <- makeClassifTask(data=blood_m, target='Donated', positive=1)
+
+create_model <- function(name, ...) {
+  classif_lrn <- makeLearner(name, predict.type='prob', ...)
+  model <- train(classif_lrn, classif_task)
+  model
+}
+
+test_model <- function(model, type) {
+  pred <- predict(model, classif_task)$data$prob.1
+  if(type == 'roc' | type == 'pr') {
+    fg <- pred[blood_m$Donated==1]
+    bg <- pred[blood_m$Donated==0]
+    if(type == 'roc') {
+      plot(roc.curve(scores.class0=fg, scores.class1=bg, curve=T))
+    }
+    if(type == 'pr') {
+      plot(pr.curve(scores.class0=fg, scores.class1=bg, curve=T))
+    }
+  }
+  if(type == 'acc') {
+    acc <- measureACC(blood_m$Donated, as.numeric(pred>=0.5))
+    print(paste0('Model accuracy is: ', round(acc, 2)))
+  }
+}
+```
+
+Następnie tworzę i diagnozuję poszczególne modele.
+
+### Model ranger
+
+```{r}
+ranger <- create_model('classif.ranger')
+test_model(ranger, 'acc')
+```
+
+```{r}
+test_model(ranger, 'roc')
+```
+
+```{r}
+test_model(ranger, 'pr')
+```
+
+### Model xgboost
+
+```{r}
+xgboost <- create_model('classif.xgboost')
+test_model(xgboost, 'acc')
+```
+```{r}
+test_model(xgboost, 'roc')
+```
+
+```{r}
+test_model(xgboost, 'pr')
+```
+
+### Model svm
+
+```{r}
+svm <- create_model('classif.svm', cost=1.56406287097113, gamma=0.549897061263408)
+test_model(svm, 'acc')
+```
+
+```{r}
+test_model(svm, 'roc')
+```
+
+```{r}
+test_model(svm, 'pr')
+```
+
+### Model kknn
+
+```{r message=FALSE}
+kknn <- create_model('classif.kknn', k=30)
+test_model(kknn, 'acc')
+```
+
+```{r}
+test_model(kknn, 'roc')
+```
+
+```{r}
+test_model(kknn, 'pr')
+```
+
+### Model lda
+
+```{r}
+lda <- create_model('classif.lda')
+test_model(lda, 'acc')
+```
+
+```{r}
+test_model(lda, 'roc')
+```
+
+```{r}
+test_model(lda, 'pr')
+```
+
+### Komentarz
+
+Wszystkie modele osiągają przyzwoite wyniki (acc w okolicach 0.8). Najlepszy jest model ranger, a najsłabszy model lda.
+
+## Permutacyjna ważność zmiennych
+
+Zacznijmy od utworzenia instancji explainerów.
+
+```{r message=FALSE}
+library(DALEX)
+library(DALEXtra)
+```
+
+```{r}
+ranger_exp <- explain(model=ranger, data=blood_m[, -4], y=as.numeric(blood_m$Donated), label='ranger', colorize=FALSE)
+```
+
+```{r}
+xgboost_exp <- explain(model=xgboost, data=blood_m[, -4], y=as.numeric(blood_m$Donated==0), label='xgboost', colorize=FALSE)
+```
+
+```{r}
+svm_exp <- explain(model=svm, data=blood_m[, -4], y=as.numeric(blood_m$Donated==0), label='svm', colorize=FALSE)
+```
+
+```{r}
+kknn_exp <- explain(model=kknn, data=blood_m[, -4], y=as.numeric(blood_m$Donated), label='kknn', colorize=FALSE)
+```
+
+```{r}
+lda_exp <- explain(model=lda, data=blood_m[, -4], y=as.numeric(blood_m$Donated), label='lda', colorize=FALSE)
+```
+
+Teraz pora na przygotowanie wykresów feature importance.
+
+### Model ranger
+
+```{r}
+ranger_fi <- model_parts(ranger_exp, B=10)
+plot(ranger_fi)
+```
+
+### Model xgboost
+
+```{r}
+xgboost_fi <- model_parts(xgboost_exp, B=10)
+plot(xgboost_fi)
+```
+
+### Model svm
+
+```{r}
+svm_fi <- model_parts(svm_exp, B=10)
+plot(svm_fi)
+```
+
+### Model kknn
+
+```{r}
+kknn_fi <- model_parts(kknn_exp, B=10)
+plot(kknn_fi)
+```
+
+### Model lda
+
+```{r}
+lda_fi <- model_parts(lda_exp, B=10)
+plot(lda_fi)
+```
+
+### Komentarz
+
+Wszystkie profile są dosyć podobne, ale nie są identyczne. Możemy zauważyć, że:
+
+* najważniejszą zmienną w każdym modelu jest zmienna Recency (strata w okolicach 0.4), co intuicyjnie nie jest zaskoczeniem,
+
+* w niemal każdym modelu drugą najważniejszą zmienną jest Intensity, wyjątkiem jest tutaj model lda,
+
+* w modelach ranger i svm ważność zmiennych jest najbardziej zbliżona, w modelu kknn pośrednio, a w modelach xgboost i lda występują największe różnice między zmiennymi (patrząc proporcjonalnie),
+
+* w modelu lda zmienna Intensity jest niemal nieznacząca, takie zjawisko nie występuje w przypadku innych modeli. 
+
+Ogólnie rzecz biorąc metoda premutacyjnej ważności zmiennych wydaje się być stabilna ze względu na zmiany modeli, przynajmniej na przykładzie używanego zbioru. Największe odstępstwo od średnich ważności widoczne jest dla modelu lda, ale jest to również model najsłabszy (i dosyć specyficzny), więc być może warto patrzeć na niego z przymrużeniem oka.

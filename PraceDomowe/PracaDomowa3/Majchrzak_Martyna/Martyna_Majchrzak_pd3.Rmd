@@ -1,0 +1,160 @@
+---
+title: "Praca domowa nr 3"
+author: "Martyna Majchrzak"
+date: "15 04 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(OpenML)
+library(mlr)
+library(DALEX)
+library(DALEXtra)
+library(knitr)
+library(ranger)
+set.seed(1)
+diabetes <- getOMLDataSet(data.id = 37L)
+diabetes <- diabetes$data
+```
+
+## Zbiór danych
+
+Zbiór danych Diabetes zawiera informacje o osobach chorych na cukrzycę.
+
+1. preg - ile razy dana osoba była w ciąży
+2. plas - stężenie glukozy w osoczu po 2h ustnego testu na tolerancję glukozy
+3. pres - ciśnienie rozkurczowe (mm Hg)
+4. skin - grubość skóry mierzona na tricepsie (mm)
+5. insu - 2-Hour serum insulin (mu U/ml)
+6. mass - index masy ciała BMI (waga w kg/(wzrost w m)^2)
+7. pedi - obciążenie genetyczne (Diabetes pedigree function)
+8. age - wiek (lata)
+9. class - zmienna celu o wartościach tested_negative oraz tested_positive
+
+## Rozkłady zmiennych
+
+```{r zmienne, fig.height=6, fig.width=9}
+library(ggplot2)
+library(gridExtra)
+variables <- names(diabetes[,-9])
+
+plots <- lapply(variables, function(variable){
+  ggplot(data=diabetes, aes_string(variable)) +
+    geom_boxplot(fill='darkred') +
+    ylab('')
+})
+
+grid.arrange(grobs=plots, ncol=3)
+```
+
+## Tworzenie modelu i explainera
+
+W rozwiązaniu zostanie użyty model Random Forest. Według danych OpenML  ( https://www.openml.org/t/37 ) osiąga on średnio największą wartość miary accuracy.
+
+```{r explainer}
+model_ranger <- ranger(class~., data = diabetes, classification = TRUE, probability = TRUE)
+
+explainer<- DALEX::explain(model = model_ranger,
+                         data = diabetes[,-9],
+                         y = as.numeric(diabetes$class=='tested_positive'),
+                    colorize = FALSE)
+
+```
+
+## Predykcja dla obserwacji 13
+
+Przyjrzyjmy się pacjentce ze szczęśliwym numerem 13.
+
+```{r}
+kable(diabetes[13,])
+```
+Jest to 57-latka która była w ciąży 10 razy i ma BMI 27,1 (nadwaga).
+
+```{r pred13}
+prediction13<-predict(model_ranger, diabetes[13,])
+prediction13$predictions
+```
+
+Ta osoba z prawdopodobieństwem ok. 0.75 została przypisana do klasy tested_negative (czyli 0.25 do tested_positive)
+
+## Ceteris Paribus profile dla obserwacji 13 
+```{r cp 13}
+obs13<-diabetes[13,-9]
+cp_ranger13 <- predict_profile(explainer,
+                                     obs13)
+plot(cp_ranger13)
+```
+
+## Różnice w profilach pomiędzy obserwacjami
+
+Przyjrzyjmy się profilom dla zmiennej `skin`, która do tej pory w eksperymentach nie wydawała się być zbyt istotna.
+
+### Obserwacje, gdzie `skin`!= 0 
+
+#### Obserwacja 1
+
+```{r cp 1 skin}
+obs1<-diabetes[1,-9]
+cp_ranger1 <- predict_profile(explainer,
+                                     obs1,
+                              variables="skin")
+plot(cp_ranger1, variables="skin")
+```
+
+Dla 1 obserwacji mamy podobną sytuację - dla małych i dyżych wartości `skin` przewidywana jest niższa, `skin` w okolicach prawdziwej wartości obserwujemy skok.
+
+#### Obserwacja 2
+
+```{r cp 2 skin}
+obs2<-diabetes[2,-9]
+cp_ranger2 <- predict_profile(explainer,
+                                     obs2,
+                              variables="skin")
+plot(cp_ranger2, variables="skin")
+```
+
+Dla 2 obserwacji im wyższa wartość zmiennej `skin`, tym wyższa wartość predykcji. Predykcja zawiera się w przedziale (0,09-0.17) i widać wyraźny skok w okolicy wartości `skin`=30.
+
+
+#### Obserwacja 5
+
+```{r cp 5 skin}
+obs5<-diabetes[5,-9]
+cp_ranger5 <- predict_profile(explainer,
+                                     obs5,
+                              variables="skin")
+plot(cp_ranger5, variables="skin")
+```
+
+Dla 5 obserwacji mamy jeszcze inną sytuację - dla małych i dyżych wartości `skin` przewidywana jest niższa, choć nadal wysoka wartość (w okolicach 0.72), a dla 25<`skin`<40 mamy skok do wartość ok 0.8, która jest prawdziwą wartością predykcji.
+
+### Obserwacje, gdzie `skin`= 0 (wartości brakujące?)
+
+#### Obserwacja 13
+
+```{r cp 13 skin}
+obs13<-diabetes[13,-9]
+cp_ranger13 <- predict_profile(explainer,
+                                     obs13, variables="skin")
+plot(cp_ranger13, variables="skin")
+```
+
+Dla 13 obserwacji im wyższa wartość zmiennej skin, tym wyższa wartość predykcji. Predykcja zawiera się w przedziale (0,24-0.36) i prawdziwa jest wartość najmniejsza - 0.24. Ponownie w okolicach wartości 30 obserwujemy skok.
+
+
+#### Obserwacja 3
+
+```{r 3 skin}
+obs3<-diabetes[3,-9]
+cp_ranger3 <- predict_profile(explainer,
+                                     obs3, variables="skin")
+plot(cp_ranger3, variables="skin")
+```
+
+Dla 3 obserwacji im wyższa wartość zmiennej skin, tym niższa wartość predykcji. Predykcja zawiera się w przedziale (0,65-0.7) i prawdziwa jest wartośc największa - 0.7. W tym przykładzie jako jedynym wartość predykcji w przedziale 30-40 jest najniższa.
+
+
+## Wnioski
+Dla zmiennej `skin` obserwujemy bardzo różne zachowania predykcji - raz maleje, raz rośnie, raz ma największą wartość w okolicach wartości 30-40.
+Jedyna zależność, którą udało mi się zaobserwować (i potwierdzają to eksperymenty na innych obserwacjach), to że dla obserwacji które z wysokim prawdopodobieństwem są pozytywne (obs. 1,5,3), zwykle większa wartość `skin` powoduje zmniejszanie się tego prawdopodobieństwa (przynajmniej od miejsca tej prawdziwej wartości `skin`). Z kolei w tych, gdzie przewidziana wartość jest niska (obs.2,13) prawdopodobieństwo to rośnie wraz z wzrostem wartości `skin`.

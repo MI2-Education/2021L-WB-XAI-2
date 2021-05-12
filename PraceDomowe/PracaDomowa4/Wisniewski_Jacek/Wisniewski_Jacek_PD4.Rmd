@@ -1,0 +1,78 @@
+---
+title: "Praca domowa 4"
+author: "Jacek Wiśniewski"
+date: "28/04/2021"
+output: html_document
+---
+
+### Wstęp
+
+W tej pracy porównam działanie globalne 3 modeli predykcyjnych: ranger, svm i xgboost. W tym celu porównam wykresy feature importance dla tych trzech modeli.
+
+```{r setup, include=FALSE}
+set.seed(123)
+knitr::opts_chunk$set(echo = FALSE)
+library(mlr)
+library(DALEX)
+library(DALEXtra)
+library(gridExtra)
+library(ranger)
+library(tidyr)
+```
+
+```{r, echo=FALSE}
+phones <- read.csv('./phones.csv')
+phones[is.na(phones)] <- 0 # NA means phone does not have camera
+phones <- phones[phones$back_camera_mpix < 90 &
+                   phones$battery_mAh < 7000 &
+                   phones$flash_gb < 400 &
+                   phones$front_camera_mpix < 40, ]
+phones <- phones[, -c(1, 9, 10)] # removing name, height, width beacause they are useless
+phones <- phones %>% dplyr::group_by(brand) %>% dplyr::mutate(brand = mean(price)) # target encoding
+```
+
+```{r, include=FALSE}
+### ranger
+
+model_ranger <- ranger::ranger(price~., data = phones)
+explainer_ranger <- explain(model = model_ranger,
+                     data = phones,
+                     y = phones$price)
+
+
+### svm
+regr_task <- makeRegrTask(data = phones, target = "price")
+svm_lrn <- makeLearner("regr.svm")
+model_svm <- train(svm_lrn, regr_task)
+explainer_svm <- DALEX::explain(model = model_svm,
+                     data = phones,
+                     y = phones$price)
+
+### xgboost
+xgb_lrn <- makeLearner("regr.xgboost")
+model_xgb <- train(xgb_lrn, regr_task)
+explainer_xgb <- DALEX::explain(model = model_xgb,
+                     data = phones,
+                     y = phones$price)
+```
+
+### Ranger vs SVM
+
+```{r}
+fi_ranger <- model_parts(explainer_ranger, B = 10)
+fi_svm <- model_parts(explainer_svm, B = 10)
+fi_xgb <- model_parts(explainer_xgb, B = 10)
+
+plot(fi_ranger, fi_svm)
+```
+
+Porównując wykresy feature importance dla modeli ranger oraz svm jesteśmy w stanie zaobserwować wiele podobieństw. W obu przypadkach 3 zmienne o największym wpływie na wynik, to nazwa marki, ram_gb i flash_gb. Główna różnica między tymi modelami, którą można zaobserwować na wykresie, to wielkość interceptu. Może to oznaczać, że model svm przewiduje średnio wyższe ceny telefonów, ale bazuje głównie na tych samych zmiennych co ranger.
+
+
+### Ranger vs XGBoost
+
+```{r}
+plot(fi_ranger, fi_xgb)
+```
+
+Przy porównaniu rangera do xgboosta dochodzimy do podobnych wniosków, co w przypadku poprzedniego porównania. Ponownie oba modele bazują przede wszystkim na tych samych zmiennych przy przewidywaniu wyniku i ponownie główna różnica pomiędzy tymi modelami znajduje się w intercepcie. Tym razem jednak różnica w intercepcie jest znacznie wyraźniejsza. Intercept w przypadku xgboosta jest zwieszony tak wysoko, że obserwujemy, nie spotykany do tej pory, wpływ ujemny długości przekątnej na wynik.

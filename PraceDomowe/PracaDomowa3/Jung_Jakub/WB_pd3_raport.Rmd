@@ -1,0 +1,84 @@
+---
+title: "WB XAI-2 PD3"
+author: "Jakub Jung"
+date: "15.04.2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(DALEX)
+library(DALEXtra)
+library(mlr)
+
+diabetes <- read.csv("diabetes.csv")
+head(diabetes)
+diabetes$class[diabetes$class == "tested_positive"] <- 0
+diabetes$class[diabetes$class == "tested_negative"] <- 1
+diabetes$class <- as.numeric(diabetes$class)
+diabetes_fct <- diabetes
+diabetes_fct$class <- as.factor(diabetes_fct$class)
+classif_task <- makeClassifTask(data = diabetes_fct, target = "class")
+classif_lrn <- makeLearner("classif.svm", predict.type = "prob")
+model_mlr <- train(classif_lrn, classif_task)
+
+
+
+model <- ranger::ranger(class~., data = diabetes, classification = TRUE, probability = TRUE)
+
+
+explainer <- explain(model = model,
+                     data = diabetes[,-9],
+                     y = diabetes$class)
+
+explainer_mlr <- explain(model = model_mlr,
+                     data = diabetes_fct[,-9],
+                     y = as.numeric(as.character(diabetes_fct$class)))
+```
+
+
+## 1. Predykcja dla wybranej obserwacji
+
+Przez 0 oznaczamy pozytywny wynik testu na cukrzycę, a przez 1 negatywny.
+
+
+```{r}
+obs1 <- diabetes[4,-9]
+predict(model, obs1)$predictions
+diabetes[4,9]
+
+```
+
+## 2. Dekompozycja predykcji przy użyciu profilu Ceteris Paribus
+```{r}
+cp_profile_1 <- predict_profile(explainer_mlr, obs1)
+plot(cp_profile_1)
+```
+
+
+## 3. Porównanie profili dla różnych obserwacji
+
+Dla większości obserwacji ze zbioru danych profile CP były bardzo zbliżone i zmiany wartości zmiennych miały podobny wpływ na finalną predykcję. Udało się jednak znaleźć kilka przypadków, w których te zmiany mogły mieć przseciwny wpływ.
+
+```{r}
+cp_profile_12 <- predict_profile(explainer_mlr,
+                                 new_observation = diabetes[c(4,24),],
+                                 variables = "age")
+plot(cp_profile_12, color = "_ids_", variables = "age")
+```
+
+Dla obserwacji 24 widać ciekawą zależność - wraz ze wzrostem wieku maleje predykcja modelu na pozytywny wynik testu na cukrzycę. Może to oznaczać, że wartości pozostałych zmiennych sprawiają, że model ocenia daną osobę jako "niezbyt zdrową" osobę młodą, natomiast te same parametry dla osoby starszej oznaczałyby doskonały stan zdrowia i w związku z tym mniejszą szansę na cukrzycę. 
+
+```{r}
+cp_profile_12 <- predict_profile(explainer_mlr,
+                                 new_observation = diabetes[c(4,14),],
+                                 variables = c("preg", "age"))
+plot(cp_profile_12, color = "_ids_", variables = c("preg", "age"))
+diabetes[4,]
+diabetes[14,]
+```
+
+Obserwacje 4 i 14 to dwie kobiety: młoda i starsza. Obie jednak miały taką samą liczbę ciąży - 1, czyli przeciętnie (lub nawet mało jak na ten zbiór danych) dla kobiety w wieku 21 lat (4), natomiast wyjątkowo mało (jak na ten zbiór danych) dla kobiety w wieku 59 lat (14). I tak dla obserwacji 4 predykcja modelu na pozytywny wynik testu na cukrzycę mocno wzrasta wraz z większą liczbą ciąży, ale dla obserwacji 14 maleje. 

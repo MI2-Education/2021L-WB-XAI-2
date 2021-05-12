@@ -1,0 +1,51 @@
+---
+title: "WB XAI-2 PD4"
+author: "Jakub Szypuła"
+date: "27/04/2021"
+output: pdf_document
+---
+  
+```{r setup, include=FALSE}
+library(DALEX)
+library(DALEXtra)
+
+gcd <- read.csv("dataset_31_credit-g.csv")
+model <- ranger::ranger(class~., data = gcd, classification = TRUE, probability = TRUE)
+explainer <- explain(model = model,
+                     data = gcd[,-21],
+                     y = gcd$class)
+library(mlr)
+classif_task <- makeClassifTask(data = gcd, target = "class")
+classif_lrn <- makeLearner("classif.svm", predict.type = "prob")
+model_mlr <- train(classif_lrn, classif_task)
+explainer_mlr <- explain_mlr(model = model_mlr,
+                         data = gcd[,-21],
+                         y = as.numeric(gcd$class == 'bad'))
+```
+
+
+## Permutacyjna ważność zmiennych
+
+```{r obs}
+fi_1 <- model_parts(explainer, B = 10)
+plot(fi_1)
+```
+
+Po raz kolejny można zauważyć, że największe znaczenie ma `checking_status`, po nim `duration` i `credit_amount` a następnie `age`. Potwierdza to w pewnym stopniu wnioski z poprzednich PD i intuicję, pokazując, że zmienne które uznaliśmy za ważne faktycznie są ważne. To co też  jest potwierdzone to nikły wpływ zmiennych `foreign_worker` czy `own_telephone`, które faktycznie mogą nie być zbyt znaczące. Te interpretacje (tj. opierając je na naszej wiedzy z prawdziwego życia) opierają się na tym, że model jest dobry. Zobaczmy co się dzieje, kiedy spróbujemy inny model.
+
+
+## Permutacyjna ważność zmiennych dla innego modelu
+
+W tym wypadku postanowiłem zastosować model SVM.
+
+```{r svm}
+
+fi_2 <- model_parts(explainer_mlr, B = 10)
+plot(fi_2)
+```
+
+Przede wszystkim widać, że modele różnią się jakością - wystarczy popatrzeć  na  oś OX, gdzie wartości są o wiele większe niż w poprzednim wykresie (czyli model jest znacznie bardziej podatny na zaburzenia w jednej zmiennej). AUC pierwszego modelu wynosi 0.941 a drugiego 0.735, co może być przyczyną tego zachowania. Tak samo boxploty są szersze. Być może poza ważnością zmiennych może nam to powiedzieć nieco o jakości modelu i jego podatności na zaburzenia w zmiennych.
+
+Jeśli idzie o ważność zmiennych, `checking_status` i `duration` dalej są dwiema najważniejszymi, wyżej wskakuje jednak zmienna `purpose`. Potem jest jednak `credit_amount`, które oryginalnie było trzecie. 8 z 10 top 10 najbardziej wpływowych zmiennych jest taka sama dla obu modeli. Dodatkowo na samym dole dalej jest `foreign_worker`. Mimo wszystko różnica w tym, że `credit_amount` jest poniżej `purpose` w znaczeniu każe nam zastanowić się nad jakością modelu. 
+
+Mimo wszystko fakt, że wyjaśnienia pozostają stabilne może ozanaczać, że niezależnie od modelu, dla tych danych konkretne zmienne są ważniejsze przy predykcji, chociaż do potwierdzenia tego trzeba byłoby wypróbować to na większej liczbie modeli.

@@ -168,16 +168,16 @@ Zgaduję, że może tutaj chodzić o coś w stylu wypalenia - osoby, które w kr
 <br>
 
 ```{r}
-a <- blood_m[blood_m$Recency==2 & blood$Time < 48 & blood_m$Intensity < 0.55 , 4] == 1
-b <- blood_m[blood_m$Recency==2 & blood$Time < 48 & blood_m$Intensity > 0.55 & blood$Time < 24, 4] == 1
+a <- blood_m[blood_m$Recency <= 6 & blood$Time < 48 & blood_m$Intensity < 0.55, 4] == 1
+b <- blood_m[blood_m$Recency <= 6 & blood$Time < 48 & blood_m$Intensity > 0.55, 4] == 1
 ```
 
 ```{r}
-cat(paste0(round(sum(a)/length(a), 2)*100, '% out of ', length(a), ' people with Time < 48 and Intensity < 0.55 did donate.\n'))
+cat(paste0(round(sum(a)/length(a), 2)*100, '% out of ', length(a), ' people with Recency <= 6 and Time <= 48 and Intensity < 0.55 did donate.\n'))
 ```
 
 ```{r}
-cat(paste0(round(sum(b)/length(b), 2)*100, '% out of ', length(b), ' people with Time < 48 and Intensity > 0.55 did donate.\n'))
+cat(paste0(round(sum(b)/length(b), 2)*100, '% out of ', length(b), ' people with Recency <= 6 and Time <= 48 and Intensity > 0.55 did donate.\n'))
 ```
 
 Powyżej znajduje się próba potwierdzenia mojej teorii. Rzeczywiście coś może być na rzeczy.
@@ -190,7 +190,7 @@ Najlepiej jednak będzie użyć testu statystycznego.
 # https://en.wikipedia.org/wiki/Fisher%27s_exact_test
 fisher.test(rbind(c(sum(a), length(a) - sum(a)), c(sum(b), length(b) - sum(b))), alternative = 'greater')
 ```
-p-value na poziomie 0.05265 sugeruje, że może to nie być tylko przypadek.
+p-value na poziomie 0.054 sugeruje, że może to nie być tylko przypadek.
 
 ```{r}
 prop.test(c(sum(a), sum(b)), c(length(a), length(b)), alternative = 'greater')

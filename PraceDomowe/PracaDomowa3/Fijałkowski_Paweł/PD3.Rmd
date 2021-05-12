@@ -1,0 +1,75 @@
+---
+title: "PD3 XAI "
+author: "Paweł Fijałkowski"
+date: "15/04/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(DALEX)
+library(DALEXtra)
+library(mlr)
+data <- read.csv("data-credit.csv")
+model <- ranger::ranger(class~., data = data, classification = TRUE, probability = TRUE)
+explainer <- explain(model = model,
+                     data = data[,-21], # Last column = data target, removed for explanation purposes.
+                     y = data$class)
+```
+
+
+## Predykcja dla zadanej obserwacji
+
+```{r predykcja}
+predict(model, data[25,])$predictions[2]
+data[25,"class"]
+```
+
+Predykcja została wykonana poprawnie, z bardzo wysokim prawdopodobieństwem.
+
+## Dekompozycja
+
+```{r fig.height=4}
+cp_1 <- predict_profile(explainer,data[25,-21])
+plot(cp_1)
+```
+
+## CeterisParibus odmienne wpływy
+
+
+Weźmy pod lupę obserwacje zakwalifikowane do klasy `bad`.
+
+
+```{r prob_ceteris1}
+predict(model, data[420,])$predictions[2]
+```
+
+```{r ceteris1, fig.height=4}
+ceteris1 <- predict_profile(explainer,data[420,-21])
+plot(ceteris1)
+```
+```{r prob_ceteris2}
+predict(model, data[12,])$predictions[2]
+```
+
+```{r ceteris2, fig.height=4}
+ceteris2 <- predict_profile(explainer,data[12,-21])
+plot(ceteris2)
+```
+
+
+
+Zauważmy, jak odmienny wpływ ma zmienna `credit_amount` dla obserwacji `420` i `12`. 
+W przypadku tej pierwszej, jest on znaczący i małe zmiany wartości kredytu znacząco zmieniają wartość orzekniętej predykcji (z wyraźnym maksimum w okoliach `3000 marek`), podczas gdy dla drugiej, zmienna ma praktycznie pomijalny wpływ. 
+
+
+Potencjalnym wyjaśnieniem dla tego zjawiska, mogłby być wpływ wartości zmiennej `duration` na obserwację `12`.
+Duża wartość tej właśnie zmiennej, wpływa negatywnie na klasyfikację do klasy `good`. W przypadku tak dużej wartości zmiennej `duration` (48) jak w przypadku obserwacji `12`, wszystkie inne zmienne przestają odgrywać jakąkolwiek rolę. 
+
+
+
+
+
+
+
+
+

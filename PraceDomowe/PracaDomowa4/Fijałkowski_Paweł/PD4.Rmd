@@ -1,0 +1,61 @@
+---
+title: "PD4 XAI "
+author: "Paweł Fijałkowski"
+date: "28/04/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(DALEX)
+library(DALEXtra)
+library(mlr)
+library(e1071)
+data <- read.csv("data-credit.csv")
+```
+
+Podział na zbiory testowe i treningowe.
+```{r}
+my_sample <- sample(1:nrow(data), 0.5*nrow(data))
+train <- data[my_sample,]
+test <- data[-my_sample,]
+```
+
+
+MODEL 1 - las losowy
+```{r}
+model <- ranger::ranger(class~., data = train, classification = TRUE, probability = TRUE)
+explainer_random_forest <- explain(model = model,
+                     data = test, 
+                     y = data$class)
+```
+
+Permutacyjna ważność zmiennych dla lasu losowego.
+```{r}
+feature_importance <- model_parts(explainer_random_forest, B = 10)
+plot(feature_importance)
+```
+
+Według wyjaśnienia permutacyjnego, największą rolę w zadanej predykcji odgrywają zmienne `checking_status`, `installmet_commitment`, `credit_amount`, `age` i `saving_status`. Ma to intuicyjny sens, takie cechy jak długość kredytu czy jego wysokość powinny mieć znaczący wpływ na prawdopodobieństwo spłacenia kredytu.
+
+MODEL 2 - SVM
+
+```{r}
+svm_model = svm(train$class ~ ., data = train, probability = TRUE, kernel = "linear", cost = 10, scale = FALSE)
+
+```
+
+```{r}
+explainer_svm <- explain(model = svm_model,
+                     data = test, 
+                     y = data$class)
+```
+
+Permutacyjna ważność zmiennych dla SVM.
+```{r}
+feature_importance <- model_parts(explainer_svm, B = 10)
+plot(feature_importance)
+```
+
+W przypadku powyższego modelu sytuacja ma się podobnie, zmienne `checking_status`, `duration`, `credit_history` i `saving_status` determinują wartość zadanej predykcji.
+
+Metoda permutacji zmiennych realizuje przekonujące w swojej prostocie globalne wyjaśnienie. Na podstawie powyższych modeli, SVM i lasu losowego, możemy "na pierwszy rzut oka" stwierdzić które ze zmiennych istotnie wpływają na zmianę wartości predykcji.

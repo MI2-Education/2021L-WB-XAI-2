@@ -1,0 +1,178 @@
+---
+title: "Praca domowa 4"
+author: "Martyna Majchrzak"
+date: "29 04 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(OpenML)
+library(mlr)
+library(DALEX)
+library(DALEXtra)
+library(knitr)
+library(ranger)
+library(mice)
+set.seed(1)
+diabetes <- getOMLDataSet(data.id = 37L)
+diabetes <- diabetes$data
+```
+
+```{r}
+diabetes_NA<-diabetes
+diabetes_NA[diabetes_NA == 0] <- NA
+diabetes_NA$preg[is.na(diabetes_NA$preg)] <- 0
+diabetes_NA$insu[is.na(diabetes_NA$insu)] <- 0
+diabetes_NA$class<-as.factor(as.numeric(diabetes_NA$class)-1)
+```
+
+```{r sample}
+m <- sample(1:nrow(diabetes_NA), 0.7*nrow(diabetes_NA))
+diabetes_NA_train <- diabetes_NA[m,]
+diabetes_NA_test <- diabetes_NA[-m,]
+
+```
+
+```{r skip}
+# train
+diabetes_train_skip<-diabetes_NA_train[,-c(3,4,5)]
+imp_train2 <- mice(diabetes_train_skip, method = "pmm", m = 1, maxit = 1, nnet.MaxNWts=3000)
+diabetes_train_skip <- mice::complete(imp_train2)
+
+#test
+diabetes_test_skip<-diabetes_NA_test[,-c(3,4,5)]
+imp_test2 <- mice(diabetes_test_skip, method = "pmm", m = 1, maxit = 1, nnet.MaxNWts=3000)
+diabetes_test_skip <- mice::complete(imp_test2)
+
+# displaying dataset dimensions
+dim(diabetes_train_skip)
+dim(diabetes_test_skip)
+
+```
+## Zbiór danych
+
+Zbiór danych Diabetes zawiera informacje o osobach chorych na cukrzycę.
+Użyjemy wersji skip z pominiętymi 3 najmniej istotnymi zmiennymi.
+
+1. preg - ile razy dana osoba była w ciąży
+2. plas - stężenie glukozy w osoczu po 2h ustnego testu na tolerancję glukozy
+3. mass - index masy ciała BMI (waga w kg/(wzrost w m)^2)
+4. pedi - obciążenie genetyczne (Diabetes pedigree function)
+5. age - wiek (lata)
+6. class - zmienna celu o wartościach tested_negative oraz tested_positive
+
+## Rozkłady zmiennych
+
+```{r zmienne, fig.height=6, fig.width=9}
+library(ggplot2)
+library(gridExtra)
+variables <- names(diabetes_train_skip)
+
+plots <- lapply(variables, function(variable){
+  ggplot(data=diabetes, aes_string(variable)) +
+    geom_bar(fill='darkred') +
+    ylab('')
+})
+
+grid.arrange(grobs=plots, ncol=3)
+```
+
+## Model ranger
+
+W modelu zastosujemy znalezione podczas strojenia optymalne wartości parametrów.
+
+```{r explainer ranger}
+task_ranger <- makeClassifTask(data = diabetes_train_skip, target = "class")
+learner_ranger <- makeLearner("classif.ranger", predict.type = "prob", num.trees=776, mtry=1, min.node.size=8,  splitrule="extratrees")
+model_ranger <- train(learner_ranger, task_ranger)
+
+explainer_ranger<- DALEX::explain(model = model_ranger,
+                         data = diabetes_train_skip,
+                         y = as.numeric(diabetes_train_skip$class=='1'),
+                    colorize = FALSE)
+pred_ranger <- predict(model_ranger, newdata = diabetes_test_skip)$data
+AUC_ranger <- measureAUC(probabilities = pred_ranger$prob.1,
+                       truth = pred_ranger$truth,
+                       negative="0",
+                       positive = "1")
+FNR_ranger <- measureFNR(pred_ranger$truth,
+                       pred_ranger$response,
+                       negative="0",
+                       positive = "1")
+BAC_ranger <- measureBAC(pred_ranger$truth,
+                       pred_ranger$response)
+
+```
+
+```{r, echo = TRUE}
+AUC_ranger 
+FNR_ranger
+BAC_ranger
+```
+## Model Ada
+
+```{r explainer ada}
+task_ada <- makeClassifTask(data = diabetes_train_skip, target = "class")
+learner_ada <- makeLearner("classif.ada", predict.type = "prob")
+model_ada <- train(learner_ada, task_ada)
+
+explainer_ada<- DALEX::explain(model = model_ada,
+                         data = diabetes_train_skip,
+                         y = as.numeric(diabetes_train_skip$class=='1'),
+                    colorize = FALSE)
+
+pred_ada <- predict(model_ada, newdata = diabetes_test_skip)$data
+AUC_ada <- measureAUC(probabilities = pred_ada$prob.1,
+                       truth = pred_ada$truth,
+                       negative="0",
+                       positive = "1")
+FNR_ada <- measureFNR(pred_ada$truth,
+                       pred_ada$response,
+                       negative="0",
+                       positive = "1")
+BAC_ada <- measureBAC(pred_ada$truth,
+                       pred_ada$response)
+
+```
+
+```{r, echo=TRUE}
+AUC_ada
+FNR_ada
+BAC_ada
+```
+
+## Wyliczenie Feature Importance
+
+```{r, echo=TRUE}
+fi_1 <- model_parts(explainer_ranger, B = 10, N=1000)
+fi_2 <- model_parts(explainer_ada, B = 10, N=1000)
+```
+
+
+Niestety wyświetlanie
+
+## Feature Importance Ranger
+
+```{r}
+plot(fi_1)
+```
+
+Zdecydowanie najważniejszą zmienną w modelu ranger jest zmienna `plas` (importance 0.175), a pozostałe zmienne mają bardzo podobne wyniki ok. 0.1.
+
+## Feature Importance Ada
+```{r}
+plot(fi_2)
+```
+Ponownie najważniejszą zmienną w modelu ranger jest zmienna `plas` (importance 0.22), na drugim miejscu mamy `mass` (0.17). Najmniej istotną zmienną okazuje się ilość razy, które pacjentka była w ciąży.
+
+## Porównanie
+
+Kolejność  ważności zmiennych w obu modelach jest taka sama:
+- plas - stężenie glukozy w osoczu po 2h ustnego testu na tolerancję glukozy
+- mass - index masy ciała BMI (waga w kg/(wzrost w m)^2)
+- pedi - obciążenie genetyczne (Diabetes pedigree function)
+- age - wiek (lata)
+- preg - ile razy dana osoba była w ciąży
+
+Główna różnice polega na większym feature importance `plass` i `mass` i mniejszym feature importance `preg` w modelu Ada. W modelu ranger wartość feature importance jest bardziej zbilansowana.

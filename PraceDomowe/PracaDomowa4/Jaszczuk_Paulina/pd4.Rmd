@@ -1,0 +1,81 @@
+---
+title: "Warsztaty badawcze - XAI - Praca domowa 4"
+author: "Paulina Jaszczuk"
+date: "29 04 2021"
+output: html_document
+---
+
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(mlr)
+library(DALEX)
+library(DALEXtra)
+library(pROC)
+library(plyr)
+library(OpenML)
+```
+
+## Wczytanie danych
+
+```{r data}
+df <- read.csv("C:\\Users\\pauli\\warsztaty_badawcze\\pd4\\german_credit.csv")
+
+class_numerical <- model.matrix(~ 0 + class, df)
+df$class <- class_numerical[,"classgood"]
+
+df$class[df$class == 1] <- 2
+df$class[df$class == 0] <- 1
+df$class[df$class == 2] <- 0
+```
+
+
+Dane zostały przekształcone analogicznie jak w pracy domowej 1. Target został odwrócony, gdyż okazało się, że metoda interpretuje przewidywania modelu jako odwrotne.
+
+## Przygotowanie modelu i explainera (ranger)
+
+```{r model_explainer_1, results=FALSE}
+model <- ranger::ranger(class~., data = df, classification = TRUE, probability = TRUE)
+
+explainer <- DALEX::explain(model = model,
+                     data = df[,-21],
+                     y = df$class)
+```
+```{r params_ranger}
+model_performance(explainer)
+```
+
+## Feature Importance dla rangera
+
+```{r fi1}
+fi <- model_parts(explainer, B = 10)
+plot(fi)
+```
+
+## Przygotowanie modelu i explainera (SVM)
+
+```{r model_explainer_2, results=FALSE, warning=FALSE}
+cols <- c('checking_status', 'credit_history', 'purpose', 'savings_status', 'employment', 'personal_status', 'other_parties', 'property_magnitude', 'other_payment_plans', 'housing', 'job', 'own_telephone', 'foreign_worker', 'class') 
+
+df[cols] <- lapply(df[cols], factor)
+
+classif_task <- makeClassifTask(data = df, target = "class")
+
+classif_lrn_svm <- makeLearner("classif.svm", predict.type = "prob")
+
+model_svm  <- train(classif_lrn_svm , classif_task)
+
+explainer_svm <- explain(model = model_svm,
+                     data = df[,-21],
+                     y = df$class)
+
+```
+
+## Feature Importance dla SVM
+
+```{r fi2}
+fi2 <- model_parts(explainer_svm, B = 10)
+plot(fi2)
+```
+
+Według obu modeli AUC maleje najbardziej po przelosowaniu zmiennych `checking status`, `duration` i `credit amount`. Rzeczywiście status konta, okres i wysokość kredytu wydają się być ważnymi czynnikami w określaniu, czy nasz klient jest dobrym kredytobiorcą. W obu modelach zmniejszenie AUC po przelosowaniu zmiennych jest dość podobne (w rangerze nieznacznie większe). Pozostałe zmienne nie wydają się zbyt przydatne w predykcji - jeśli je przelosujemy, model nie straci za dużo na swojej jakości. Na wykresach widzimy też, lepsze AUC ma ranger.

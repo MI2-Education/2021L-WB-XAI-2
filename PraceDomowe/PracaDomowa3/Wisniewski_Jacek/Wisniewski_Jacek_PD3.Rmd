@@ -1,0 +1,70 @@
+---
+title: "Praca Domowa 3"
+author: "Jacek Wiśniewski"
+date: "15/04/2021"
+output: html_document
+---
+
+
+### Wstęp
+
+W tej pracy stworzę model predykcyjny do przewidywania ceny telefonu, który następnie przeanalizuję korzystając z wykresów Ceteris Paribus. Skupię się również na analizie działania wykresów Ceteris Paribus.
+
+```{r setup, include=FALSE}
+set.seed(123)
+knitr::opts_chunk$set(echo = FALSE)
+library(mlr)
+library(DALEX)
+library(DALEXtra)
+library(gridExtra)
+library(ranger)
+```
+
+### Telefony którymi się będę zajmował
+
+```{r}
+data <- read.csv("./phones.csv")
+data <- na.omit(data)
+knitr::kable(data[c(1, 3, 7),], row.names = FALSE)
+```
+
+```{r, include=FALSE}
+# task <- makeRegrTask(data = data[,-c(1, 2)], target = "price")
+# learner <- makeLearner("regr.gbm")
+# model <- train(learner, task)
+model <- ranger::ranger(price~., data=data, seed=123, num.trees = 50)
+
+explainer <- explain(model = model,
+                     data = data[,-11],
+                     y = data$price)
+```
+
+### Przewidywana cena pierwszego telefonu
+
+```{r}
+knitr::kable(predict(explainer, data[1, ]), align = 'l', col.names = '')
+```
+
+### Wykres Ceteris Paribus dla pierwszego telefonu
+
+```{r}
+plot(predict_profile(explainer, data[1, -11]))
+```
+
+Już na pierwszym wykresie jesteśmy w stanie zaobserwować ciekawe zależności. Widać, że przy tworzeniu predykcji dla pierwszego telefonu, spore znaczenie miały zmienne opisujące wysokość telefonu oraz szerokość telefonu, ale nie długość jego przekątnej. Może to być sygnał, że te zmienne niosą tę samą informację, a co za tym idzie, przy tworzeniu modelu powinna być wykorzystana tylko jedna z nich.
+
+### Wykres Ceteris Paribus dla drugiego telefonu
+
+```{r}
+plot(predict_profile(explainer, data[3, -11]))
+```
+
+Wykresy dla drugiego telefonu znacząco się różnią od pierwszych wykresów. Dla przykładu wykres opisujący zależność wysokości telefonu od jego ceny, przy ogólnej tendencji wzorostowej na drugim wykresie, zalicza znaczny spadek w okolicach 2500 px. Ciężko jest mi wytłumaczyć tą anomalię, że telefony posiadające większy ekran, kosztują znacznie mniej od tych, które są mniejsze.
+
+### Wykres Ceteris Paribus dla trzeciego telefonu
+
+```{r}
+plot(predict_profile(explainer, data[7, -11]))
+```
+
+Wykresy dla trzeciego telefonu znacząco się nie różnią od poprzednich wykresów. Można jednak zaobserwować pewne odstępstwo od normy. W przypadku telefonu 2 i 3 cena delikatnie rosła wraz ze wzrostem długości przekątnej telefonu. W przypadku telefonu numer 3 nie jesteśmy w stanie tego stwierdzić.

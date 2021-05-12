@@ -1,0 +1,115 @@
+---
+title: "WB-XAI-2 Praca domowa 4"
+author: "Janus Dawid"
+date: "25 03 2021"
+output: html_document
+---
+
+
+## Wczytanie danych
+
+```{r,echo=FALSE, results='hide', message=FALSE,warning=FALSE}
+library(lime)
+library(DALEX)
+library(DALEXtra)
+library(mlr)
+library(dplyr)
+
+
+```
+
+```{r}
+
+
+blood <- read.csv("D:/Studia/Projekty/R-projekty/blood.csv", 
+                   header = TRUE)
+
+head(blood)
+
+```
+
+## Informacje o danych
+* V1: Recency - months since last donation
+* V2: Frequency - total number of donation
+* V3: Monetary - total blood donated in c.c.
+* V4: Time - months since first donation)
+* Class: The target attribute is a binary variable representing whether he/she donated blood in March 2007 (2 stands for donating blood; 1 stands for not donating blood).
+
+## Zmiana nazw kolumn 
+
+```{r}
+
+
+names(blood) <- c("Recency", "Frequency", "Monetary", "Time", "Class")
+
+blood$Class <- factor(ifelse(blood$Class==2, 1, 0))
+
+
+head(blood)
+
+```
+
+
+## Tworzenie modelów 
+
+```{r, warning=FALSE,results='hide', message=FALSE}
+
+
+classif_task <- makeClassifTask(data = blood, target = "Class")
+classif_rang <- makeLearner("classif.ranger", predict.type = "prob")
+model_rang <- train(classif_rang, classif_task)
+
+classif_xgb <- makeLearner("classif.xgboost", predict.type = "prob")
+model_xgb<- train(classif_xgb, classif_task)
+
+classif_knn <- makeLearner("classif.kknn", predict.type = "prob")
+model_knn<- train(classif_knn, classif_task)
+
+classif_svm<- makeLearner("classif.svm", predict.type = "prob")
+model_svm<- train(classif_svm, classif_task)
+```
+
+
+## Utworzenie explainerów
+
+```{r}
+
+explainer1 <- explain(model = model_rang,
+                     data = blood[,-5],
+                     y = as.numeric(blood[,5]))
+
+explainer2 <- explain(model = model_xgb,
+                     data = blood[,-5],
+                     y = as.numeric(blood[,5]==0))
+
+explainer3 <- explain(model = model_knn,
+                     data = blood[,-5],
+                     y = as.numeric(blood[,5]))
+
+explainer4<- explain(model = model_svm,
+                     data = blood[,-5],
+                     y = as.numeric(blood[,5]==0))
+```
+
+
+## Porównanie ważności zmiennych
+
+```{r}
+ranger <- model_parts(explainer1, B=10)
+plot(ranger)
+
+xgb <- model_parts(explainer2, B=10)
+plot(xgb)
+
+knn<- model_parts(explainer3, B=10)
+plot(knn)
+
+svm <- model_parts(explainer4, B=10)
+plot(svm)
+
+```
+
+
+Wszystkie modele uznały najważniejszą zmienną jako *Recency*, czyli ilość miesięcy od ostatniego pobrania krwi, więc nie dziwi fakt, że akurat ta zmienna ma największy wpływ. Wszystkie modele oprócz xgboost uznały zmienną *Time* jako drugą co do ważności. Na trzeciej pozycji najczęściej pojawia sie *Monetary*, a na ostatniej *Frequency*. 
+Można  zauważyć, że modele bardzo podobnie określiły ważność zmiennych. Model *kknn* z *svm* wręcz identycznie. W pozostałych 2 występowały delikatnie rozbieżności. 
+

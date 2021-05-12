@@ -1,0 +1,85 @@
+---
+title: "HW3"
+author: "Agata Kaczmarek"
+date: "15 04 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#biblioteki
+library(DALEX)
+library(DALEXtra)
+library(ggplot2)
+library(lime)
+library(mlr)
+set.seed(123)
+#dane
+phones <- read.csv("phones.csv")
+```
+
+### Wstęp
+W tej pracy skupię się na przygotowaniu dekompozycji predykcji modelu używając profili Ceteris Paribus. Wybiorę również dwie obserwacje, dla których profile Ceteris Paribus są różne. Zbiór danych wykorzystany w tym zadaniu dotyczy telefonów i ich różnych cech. Obserwacje posiadające braki w danych zostaną usunięte.
+
+```{r}
+which(is.na(phones))
+
+#usuwamy braki
+phones2<- phones[complete.cases(phones),]  
+```
+
+### Model
+
+Poniżej stworzę przykładowy model dla mojego zbioru danych, a także wyliczę jego predykcję dla pięćdziesiątej czwartej obserwacji:
+
+```{r}
+model <- ranger::ranger(price~., data=phones2[,-1], seed=123, num.trees = 50)
+
+model
+#predykcja dla pierwszego 
+predict(model, phones2[54,])$predictions
+#dane podane
+phones2[54,]$price
+```
+
+Różnica jest widoczna między wartością podaną, a wartością wyliczoną przez model, jednak te wartości są dość do siebie zbliżone - wartość podana przez model stanowi około 102.5% wartości podanej.
+
+### Dekompozycja przy użyciu Ceteris Paribus
+
+Poniżej zostanie wyliczona dekompozycja dla obserwacji pięćdziesiątej czwartej:
+
+```{r}
+model_type.dalex_explainer <- DALEXtra::model_type.dalex_explainer
+predict_model.dalex_explainer <- DALEXtra::predict_model.dalex_explainer
+#explainer
+explainer <- DALEX::explain(model = model,
+                     data = phones2[,-11],
+                     y = phones2$price,
+                     colorize = FALSE)
+```
+
+```{r}
+cp <- predict_profile(explainer, phones[54, -11])
+plot(cp)
+```
+
+Widzimy tutaj jak zachowują się predykcje dla zwiększania kolejnych parametrów. Możemy zauważyć, że np przekątna ekranu ma pozytywny wpływ na cenę telefonu dopiero, gdy jej wartość zbliża się (od dołu) do 6. W tym miejsu następuje skok, a później predykcja rośnie już mniejszymi skokami, ale wraz ze wzrostem przekątnej. Jest to zrozumiałe i rzeczywiste, jako że dość popularne w ostatnich czasach są jak największe ekrany telefonów. Zastanawiająco wygląda nagły spadek (na niewielkiej zmianie wartości jest to spadek o nawet 500 dla prediction) przy wartości około 2400 dla *heigh_px*. Tak wielkiego spadku nie widać dla żadnej wartości dla *width_px*, a jak wiemy z wcześniej przeprowadzonego EDA, te zmienne mają duży współczynnik korelacji ze sobą. Zastanawiający jest również brak wzrostu prediction dla coraz większych wartości *front_camera_px*, co wydaje się niezbyt rzeczywiste.
+
+### Obserwacje posiadające różne profile Ceteris Paribus
+
+Wybierzmy obserwację jedenastą oraz pierwszą (oraz pięćdziesiąta czwartą):
+ 
+```{r}
+cp <- predict_profile(explainer, phones[11, -11])
+plot(cp)
+```
+ 
+```{r}
+cp <- predict_profile(explainer, phones[1, -11])
+plot(cp)
+```
+
+Dla tych obserwacji mozemy zauważyć pewne różnice: dla jedenastej możemy zauważyć, że *back_camera_mpix* oprócz gwałtownego spadku w okolicy 15, układa się w zasadzie w linię prostą, co jest zastanawiające, patrząc, że ani w obserwacji 54 ani w 1 nie ma linii prostej, raczej najpierw jest delikatny spadek, a następnie rozpoczyna się wzrost (w 54. większy niż w 1.). Kolejnym zastanawiającym wykresem jest ten *battery_mAh*, ponieważ o ile dla obserwacji 11. jest on dość stabliny, delikatnie wzrastajacy (tylko w okolicach koło wartości 3000), o tyle w obserwacji 1. mamy do czynienia ze spadkiem w okolicach 4000 do 5000. Dla zmiennej *diag* możemy zaobserwować ciekawą sytuację: dla obserwacji 54. od okolic wartości 6 mamy do czynienia ze wzrostem, natomiast dla obserwacji 11. wykres jest praktycznie stabilny (oprócz okolic wartości 6 właśnie), natomiast dla obserwacji 1. możemy zaobserwować okresowe spadki na przedziale od 5 do 7.
+
+### Podsumowanie
+
+Dla niektórych powyższych obserwacji, pewne zmienne mają podobne wykresy między różnymi obserwacjami (jak np *ram_gb*), ale dla innych zmiennych możemy zaobserwować pewne różnice, czasem bardziej widoczne, czasem mniej, ale i tak znaczące. Również i tym razem wszystkie powyższe wnioski zostały stworzone na podstawie konkretnych obserwacji, w szczególności wybranych losowo ze zbioru danych. Część wniosków pokrywa się z tymi, które wynikały np z dekompozycji LIME (jak to że *ram_gb* ma pozytywny wpływ na predykcję), a część jest dość zastanawiająca w szczególności w porównaniu z wnioskami z przeprowadzonego wcześniej EDA (jak te z *diag*, *height_px*, *width_px*). Przy wyjaśnieniach globalnych będziemy mogli spróbować delikatnie sugerować się wnioskami płynącymi z powyższych analiz, jednak będzie trzeba je sprawdzić czy są prawdziwe przy użyciu narzędzi odpowiednich do globalnych analiz.
