@@ -1,7 +1,7 @@
 ---
 title: "Praca Domowa 4"
 author: "Agata Makarewicz"
-date: "15 04 2021"
+date: "29 04 2021"
 output: 
   html_document:
   theme: united
