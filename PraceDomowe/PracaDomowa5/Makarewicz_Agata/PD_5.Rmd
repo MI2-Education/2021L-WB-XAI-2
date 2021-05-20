@@ -1,0 +1,166 @@
+---
+title: "Praca Domowa 5"
+author: "Agata Makarewicz"
+date: "13 05 2021"
+output: 
+  html_document:
+  theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(DALEX)
+library(DALEXtra)
+library(ranger)
+library(knitr)
+library(lime)
+library(gridExtra)
+library(mlr)
+set.seed(1)
+```
+
+### Wstęp 
+
+Naszym zadaniem będzie analiza wyjaśniająca decyzję modelu uczenia maszynowego (w jaki sposób poszczególne zmienne na nią wpływają). Będą to wyjaśnienia globalne, dla danego modelu, a nie pojedynczych predykcji.
+
+Skorzystamy ze zbioru danych `phones` zawierającego informacje o cechach różnych telefonów dostępnych na rynku. Rozważamy problem regresji (chcemy przewidzieć zmienną `price`) przy wykorzystaniu lasu losowego zaimplementowanego w pakiecie `ranger` (a także innych modeli).
+
+```{r data, echo=FALSE}
+data <- read.csv('C:/Users/agama/Documents/2021L-WB-XAI-2/phones.csv')
+kable(head(data,3), row.names = TRUE)
+```
+
+Zbiór posiada ok. 11% obserwacji z brakującymi wartościami w niektórych kolumnach (`back_camera_mpix`,`front_camera_mpix`), które na potrzeby tego zadania (tworzenia modelu) zostaną uzupełnione zerami (gdyż brak aparatu oznacza w praktyce 0 Mpix). Pominiemy również zmienną `name`, która jest w oczywisty sposób skorelowana ze zmienną `brand` oraz praktycznie unikalna dla każdej obserwacji (328/414 wartości unikalnych po usunięciu braków), oraz zmienne `width_px` i `height_px`, które są silnie ze sobą skorelowane i wyjaśniane przez zmienną `diag`.
+
+```{r missing, echo=FALSE}
+data[is.na(data)] <- 0 
+data <- data[, -c(1, 9, 10)]
+```
+
+```{r ranger, results=FALSE, echo=TRUE}
+model <- ranger(price~., data = data, num.trees = 50)
+explainer <- DALEX::explain(model = model, data = data[,-11], y = data$price) 
+```
+
+### Partial Dependence Profile (PDP) dla wybranych zmiennych
+
+Na podstawie poprzedniej pracy domowej wybrane zostały jedne z najważniejszych zmiennych: 
+
+* ram_gb
+* flash_gb 
+* brand
+* front_camera_mpix
+
+```{r fig.width=15}
+pdp_0 <- model_profile(explainer, variables = "brand")
+plot(pdp_0)
+```
+
+```{r fig.width=15}
+pdp_1 <- model_profile(explainer, variables = c("ram_gb", "flash_gb", "front_camera_mpix"))
+plot(pdp_1)
+```
+
+```{r fig.width=15}
+pdp_2 <- model_profile(explainer, variables = c("ram_gb", "flash_gb", "front_camera_mpix"))
+plot(pdp_2, geom='profiles')
+```
+
+Dla zmiennych `flash_gb` oraz `ram_gb` możemy zaobserwować podobne profile - wraz ze wzrostem wartości zmiennej zwiększa się przewidywana cena telefonu. Różnica polega na tym, że dla zmiennej `ram_gb` przyrosty są w miarę stabilne, i średnio większe niż dla `flash_gb`, ale dla `flash_gb` mamy większe zróżnicowanie - czasem przyrosty są minimalne, czasem bardzo duże. Oba te trendy pokrywają się z wcześniejszymi analizami, które wykazały spory pozytywny wpływ tych zmiennych na cenę telefonu.
+Jeśli chodzi o zmienną `front_camera_mpix`, możemy zauważyć wyraźny skok wartości predykcji w okolicach 10 Mpix, a następnie spadek do prawie początkowej wartości, po którym następuje stały, niewielki wzrost predykcji (średnio) , lub też jej stabilizacja (w niektórych przypadkach). To charakterystyczne zachowanie obserwowaliśmy już również w poprzednich analizach, dla pojedynczych predykcji.
+W przypadku zmiennej `brand` możemy zauważyć, że dla większości marek obserwujemy bardzo zbliżoną wartość predykcji; odznacza się jedynie 5 marek, m.in. Apple, dla której w lokalnych wyjaśnieniach faktycznie oberwowaliśmy "niespodziewane" wysokie ceny telefonów nieproporcjonalne do posiadanych parametrów.
+
+### Accumulated Local Effect (ALE) dla wybranych zmiennych
+
+```{r, fig.width=15}
+ale_0 <- model_profile(explainer, variables = "brand", type='accumulated', variable_type='categorical')
+plot(ale_0)
+```
+
+```{r fig.width=15}
+ale_1 <- model_profile(explainer, variables = c("ram_gb", "flash_gb", "front_camera_mpix"), type='accumulated')
+plot(ale_1)
+```
+
+```{r fig.width=15}
+ale_2 <- model_profile(explainer, variables = c("ram_gb", "flash_gb", "front_camera_mpix"), type='accumulated')
+plot(ale_2, geom='profiles')
+```
+
+W przypadku ALE nie obserwujemy praktycznie żadnych zmian w profilach powyższych 3 zmiennych. Wyjątek stanowi zmienna `brand`, dla której obserwujemy wyrównanie średniej wartości predykcji dla wszystkich marek z wyjątkiem Alcatel.
+
+### Zmiana rozkładu siatki i ustawienia punktów
+
+```{r}
+pdp_11 <- model_profile(explainer,variables = 'flash_gb',grid_points = 10)
+pdp_12 <- model_profile(explainer,variables = 'flash_gb',grid_points = 100)
+pdp_13 <- model_profile(explainer,variables = 'flash_gb',grid_points = 1000)
+pdp_11$agr_profiles$`_label_` <- "grid_points : 10"
+pdp_12$agr_profiles$`_label_` <- "grid_points : 100"
+pdp_13$agr_profiles$`_label_` <- "grid_points : 1000"
+plot(pdp_11, pdp_12,pdp_13)
+```
+
+```{r}
+pdp_11 <- model_profile(explainer,variables = 'front_camera_mpix',grid_points = 10)
+pdp_12 <- model_profile(explainer,variables = 'front_camera_mpix',grid_points = 100)
+pdp_13 <- model_profile(explainer,variables = 'front_camera_mpix',grid_points = 1000)
+pdp_11$agr_profiles$`_label_` <- "grid_points : 10"
+pdp_12$agr_profiles$`_label_` <- "grid_points : 100"
+pdp_13$agr_profiles$`_label_` <- "grid_points : 1000"
+plot(pdp_11, pdp_12,pdp_13)
+```
+
+```{r}
+pdp_11 <- model_profile(explainer,variables = 'ram_gb',grid_points = 10)
+pdp_12 <- model_profile(explainer,variables = 'ram_gb',grid_points = 100)
+pdp_13 <- model_profile(explainer,variables = 'ram_gb',grid_points = 1000)
+pdp_11$agr_profiles$`_label_` <- "grid_points : 10"
+pdp_12$agr_profiles$`_label_` <- "grid_points : 100"
+pdp_13$agr_profiles$`_label_` <- "grid_points : 1000"
+plot(pdp_11, pdp_12,pdp_13)
+```
+
+Manipulując rozmiarem siatki możemy zauważyć, że dla zmiennych `flash_gb` oraz `ram_gb` dla rozmiaru 10 oraz 100 nie obserwujemy praktycznie żadnej różnicy; natomiast dla 1000 profil zmienia się i bardziej szczegółowiej przedstawia poszczególne przyrosty wartości predykcji, a także pozwala lepiej odróżnić profile dla obu zmiennych. 
+W przypadku zmiennej `front_camera_mpix` możemu zauważyć, że siatka o rozmiarze 10 wyłapuje co prawda charakterystyczny skok w okolicy 10 Mpix, ale odrobinę przesunięty od właściwej wartości (10). Co ciekawe, zmiana rozmiaru siatki powoduje wzrost wartości predykcji.
+
+```{r}
+pdp_5 <- model_profile(explainer,variables = 'flash_gb',variable_splits_type = "uniform")
+pdp_6 <- model_profile(explainer,variables = 'flash_gb',variable_splits_type = 'quantiles')
+pdp_5$agr_profiles$`_label_` <- "uniform"
+pdp_6$agr_profiles$`_label_` <- "quantiles"
+plot(pdp_5,pdp_6)
+```
+
+```{r}
+pdp_5 <- model_profile(explainer,variables = 'front_camera_mpix',variable_splits_type = "uniform")
+pdp_6 <- model_profile(explainer,variables = 'front_camera_mpix',variable_splits_type = 'quantiles')
+pdp_5$agr_profiles$`_label_` <- "uniform"
+pdp_6$agr_profiles$`_label_` <- "quantiles"
+plot(pdp_5,pdp_6)
+```
+
+```{r}
+pdp_5 <- model_profile(explainer,variables = 'ram_gb',variable_splits_type = "uniform")
+pdp_6 <- model_profile(explainer,variables = 'ram_gb',variable_splits_type = 'quantiles')
+pdp_5$agr_profiles$`_label_` <- "uniform"
+pdp_6$agr_profiles$`_label_` <- "quantiles"
+plot(pdp_5,pdp_6)
+```
+
+Zmieniając rozkład z kwantylowego na jednostajny możemy zaobserwować znaczną zmianę w wyglądzie prostych dla zmiennych `flash_gb` oraz `ram_gb` - zamiast praktycznie gładkiego profilu obserwujemy "schodkową" łamaną.
+Dla zmiennej `front_camera_mpix` nie obserwujemy znacznych różnic w samym profilu, jest on jedynie nieco bardziej szczegółowy dla rozkładu jednostajnego.
+
+### Porównanie PDP i ALE dla wybranej zmiennej
+
+```{r}
+pdp <- model_profile(explainer,variables = 'flash_gb')
+ale <- model_profile(explainer, variables = 'flash_gb',type="accumulated")
+pdp$agr_profiles$`_label_` <- "pdp"
+ale$agr_profiles$`_label_` <- "ale"
+plot(pdp, ale)
+```
+
+Tak jak zaobserwowaliśmy wcześniej, profil zmiennej praktycznie nie zmienia się, ale wartości predykcji są minimalnie większe w przypadku profilu PDP, co jest efektem tego, że w obu przypadkach rozważamy różne rozkłady (graniczny bądź warunkowy).
+
+$~$
