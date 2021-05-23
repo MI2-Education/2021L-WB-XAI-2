@@ -1,0 +1,105 @@
+---
+title: "Janus_Dawid_PD5"
+output: html_document
+---
+
+
+## Wczytanie ramki danych oraz jej transformacja
+
+```{r message=FALSE}
+library(OpenML)
+blood <- getOMLDataSet(data.id = 1464)
+blood <- blood$data
+row.names(blood) <- NULL
+names(blood) <- c('Recency', 'Frequency', 'Monetary', 'Time', 'Donated')
+blood$Donated <- factor(ifelse(blood$Donated==2, 1, 0))
+blood <- blood[-3]
+blood_m <- cbind(
+  blood[c('Recency', 'Frequency')],
+  Intensity=blood$Frequency/pmax(blood$Time-blood$Recency, 1),
+  blood['Donated'])
+head(blood_m)
+```
+
+
+## Stworzenie modelu
+
+```{r message=FALSE}
+library(mlr)
+library(ranger)
+classif_task <- makeClassifTask(id='blood', data=blood_m, target='Donated')
+classif_lrn <- makeLearner('classif.ranger', predict.type='prob')
+model <- train(classif_lrn, classif_task)
+```
+
+```{r message=FALSE}
+library(DALEX)
+library(DALEXtra)
+explainer <- explain(model=model, data=blood_m, x=blood[ ,-4], y=blood$Donated, label='mlr.ranger', colorize=FALSE)
+model_type.dalex_explainer <- model_type.dalex_explainer
+predict_model.dalex_explainer <- predict_model.dalex_explainer
+```
+
+## Partial Dependence Profiles
+
+```{r}
+pdp <- model_profile(explainer) 
+plot(pdp)
+```
+
+Wnioski:
+
+* Patrząc na wykres Recency widzimy, że początkowo prawodpodobieństwo rośnie wraz ze wzrostem zmiennej. Prawodpodobnie spowodone jest to tym, że jeśli ktoś nie dawno oddawał krew musi odczekać zanim bedzie mógł oddac ją ponownie. Następnie funkcja maleje z wyjątkiem chwilowego wzrostu.
+* Wraz ze wzrostem Frequency prawdopodobienstwo oddania krwi rośnie
+* Wraz ze wzrostem Intensity prawdopodobienstwo oddania krwi rośnie poza delikatnim spadkiem w okolo 1, spowodowane prawodpodbnie efektem wypalenia
+
+
+### Różny rozmiar siatki
+
+```{r}
+pdp1 <- model_profile(explainer, grid_points=20) 
+plot(pdp1)
+```
+```{r}
+pdp2 <- model_profile(explainer, grid_points=30) 
+plot(pdp2)
+```
+
+```{r}
+pdp3 <- model_profile(explainer, grid_points=40) 
+plot(pdp3)
+```
+
+Wraz ze wzrostem siatki delikatna róznice można zobaczyć patrząc na wykres zmiennej Frequency, pozostałe zmienne różnia się znikomo.
+
+
+## Accumulated Local Effects
+
+```{r}
+ale <- model_profile(explainer, type="accumulated")
+plot(ale)
+```
+
+Wnioski płynące z w ALe są identyczne jak z PDP. Jedyna widoczna rożnica jest na wykresie zmiennej Frequency, na którym dla AlE dla  wartości wiekszych od 30 wykres jest malejący, odwrotnie niż na wykresie PDP.
+
+### Różny rozmiar siatki
+
+
+```{r}
+ale1 <- model_profile(explainer, type="accumulated", grid_points=20)
+plot(ale1)
+```
+
+
+```{r}
+ale2 <- model_profile(explainer, type="accumulated", grid_points=30)
+plot(ale2)
+```
+
+
+```{r}
+ale3 <- model_profile(explainer, type="accumulated", grid_points=40)
+plot(ale3)
+```
+
+Analogicznie jak PDP.

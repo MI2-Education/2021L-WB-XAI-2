@@ -1,0 +1,154 @@
+---
+title: "HW4"
+author: "Agata Kaczmarek"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#biblioteki
+library(DALEX)
+library(DALEXtra)
+library(mlr)
+library(xgboost)
+set.seed(123)
+model_type.dalex_explainer <- DALEXtra::model_type.dalex_explainer
+predict_model.dalex_explainer <- DALEXtra::predict_model.dalex_explainer
+#dane
+phones2 <- read.csv("phones.csv")
+```
+
+### Wstęp
+
+W tej pracy skupię się na wyliczaniu permutacyjnej ważności zmiennych dla wybranych modeli. Będzie to wyjaśnienie gobalne, dla całego zbioru, a nie tak jak wcześniej, dla pojedynczych obserwacji. Najpierw posłużę się modelem wielokrotnie przeze mnie używanym (las losowy) a następnie innymi (SVM, gamboost).
+
+Dane użyte do tej pracy zostały przekształcone następująco: wszystkie braki danych zostały zamienione na wartość 0. Zostało tak zrobione, ponieważ braki danych występowały jedynie w kolumnach mówiących o aparacie, czyli dany telefon go nie posiadał. Kolumny *name*, *height_px*, *width_px* zostały usunięte. Takie działanie jest skutkiem poprzednich analiz dotyczących zbioru, wysokiej korelacji między zmiennymi (*diag*, *height_px*, *width_px*) a także unikalnością wartości w kolumnie *name*.
+
+```{r, include=FALSE}
+phones2[is.na(phones2)] <- 0 
+phones2 <- phones2[, -c(1, 9, 10)]
+```
+
+### Modele
+
+*Model 1*
+
+Poniżej stworzę model (las losowy) dla mojego zbioru danych:
+
+```{r}
+model_ranger <- ranger::ranger(price~., data=phones2[,-1], seed=123, num.trees = 50)
+
+```
+
+```{r, include=FALSE}
+#explainer
+explainer_ranger <- DALEX::explain(model = model_ranger,
+                     data = phones2[,-11],
+                     y = phones2$price,
+                     colorize = FALSE)
+```
+
+*Model 2*
+
+A tutaj stworzę drugi model - SVM:
+
+```{r}
+phones2$brand <-as.factor(phones2$brand)
+regr_task <-makeRegrTask(data=phones2, target="price")
+regr_learner_1 <- makeLearner("regr.svm")
+model_svm <-train(regr_learner_1, regr_task)
+
+```
+
+```{r, include=FALSE}
+explainer_svm <- DALEX::explain(model = model_svm,
+                     data = phones2[,-11],
+                     y = phones2$price,
+                     colorize = FALSE)
+```
+
+*Model 3*
+
+Trzeci model - gamboost:
+
+```{r}
+regr_learner_2 <- makeLearner("regr.gamboost")
+
+```
+
+```{r, include=FALSE}
+model_gamboost <-train(regr_learner_2, regr_task)
+explainer_gamboost <- DALEX::explain(model = model_gamboost,
+                     data = phones2[,-11],
+                     y = phones2$price,
+                     colorize = FALSE)
+```
+
+
+### Permutacyjna ważność zmiennych dla modelu 1
+
+Zobaczmy jak działa nasz model 1: 
+
+```{r}
+data.frame(model_performance(explainer_ranger)$measures)
+```
+
+RMSE jest poniżej 290 zł, co jest dobrym wynikiem, tak samo jak R2 powyżej 0.96.
+
+```{r}
+fi_1<-model_parts(explainer_ranger, B=10)
+plot(fi_1)
+```
+
+Jak widać najważniejsze zmienne dla tego modelu to *flash_gb*, *ram_gb* oraz *front_camera_mpix* (kolejność zmienna, bo funkcja używa elementu losowości).
+
+### Permutacyjna ważność zmiennych dla modelu 2
+
+Zobaczmy jak działa nasz model 2: 
+
+```{r}
+data.frame(model_performance(explainer_svm)$measures)
+```
+
+W porówaniu z lasem losowym SVM ma dwa razy większe RMSE, a R2 jest powyżej 0.83, czyli znacznie mniejsza.
+
+```{r}
+fi_2<-model_parts(explainer_svm, B=10)
+plot(fi_2)
+```
+
+W tym wypadku najważniejszymi zmiennymi okazały się *flash_gb*, *ram_gb* (podobnie jak wcześniej) oraz *brand*.
+
+### Permutacyjna ważność zmiennych dla modelu 3
+
+Zobaczmy jak działa nasz model 3: 
+
+```{r}
+data.frame(model_performance(explainer_gamboost)$measures)
+```
+
+W porównaniu z lasem losowym gamboost osiąga gorsze wyniki, jednak są one podobne do wyników osiąganych przez SVM, nawet minilanie lepsze.
+
+```{r}
+fi_3<-model_parts(explainer_gamboost, B=10)
+plot(fi_3)
+```
+
+Dla trzeciego modelu najważniejszymi okazały się tak samo jak w wypadku modelu SVM zmienne *brand*, *flash_gb* oraz *ram_gb*.
+
+### Porównanie różnych modeli
+
+```{r, fig.width=15, fig.height=8}
+plot(fi_1, fi_2)
+```
+
+Jak widać w przypadku modelu ranger oraz SVM pokrywa się ważność zmiennej *flash_gb* oraz *ram_gb*, natomiast *front_camera_mpix* jest znacznie ważniejsza według rangera niż według SVM. Widać jednak na wykresach znaczną różnicę w dokładności modelu (RMSE).
+
+```{r, fig.width=15, fig.height=8}
+plot(fi_1, fi_3)
+```
+
+W przypadku modelu ranger oraz gamboost pokrywa się ważność zmiennej *flash_gb* oraz *ram_gb*, natomiast tutaj również *front_camera_mpix* jest znacznie ważniejsza według rangera niż według drugiego modelu. Tutaj podobnie jak powyżej widzimy znaczną różnicę w dokładnościach.
+
+### Podsumowanie
+
+Wszystkie trzy modele były bardzo zgodne w kontekście najważniejszych zmiennych czyli *flash_gb* oraz *ram_gb*. Wydaje się to byc dość rzeczywistym założeniem. Co ciekawe model, który wypadł najlepiej pod względem RMSE oraz R2 czyli ranger nie uznał *brand* za jedną z ważniejszych zmiennych, a nam na podstawie lokalnych wyjaśnień wydawało się wręcz przeciwnie. Jednak pozostałe modele potwierdzają częściowo nasze przypuszczenia również w tej kwestii.

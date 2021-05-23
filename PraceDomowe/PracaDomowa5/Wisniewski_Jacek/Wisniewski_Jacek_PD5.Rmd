@@ -1,0 +1,75 @@
+---
+title: "Praca domowa 5"
+author: "Jacek Wiśniewski"
+date: "28/04/2021"
+output: html_document
+---
+
+### Wstęp
+
+W tej pracy przeanalizuję działanie globalne modelu predykcyjnego ranger. W tym celu utworzę wykresy Partial Dependence profile oraz Accumulated Local Effect. Dodatkowo porównam ich działanie i przestestuję na różnych parametrach.
+
+```{r setup, include=FALSE}
+set.seed(123)
+knitr::opts_chunk$set(echo = FALSE)
+library(mlr)
+library(DALEX)
+library(DALEXtra)
+library(gridExtra)
+library(ranger)
+library(tidyr)
+```
+
+```{r, echo=FALSE}
+phones <- read.csv('./phones.csv')
+phones[is.na(phones)] <- 0 # NA means phone does not have camera
+phones <- phones[phones$back_camera_mpix < 90 &
+                   phones$battery_mAh < 7000 &
+                   phones$flash_gb < 400 &
+                   phones$front_camera_mpix < 40, ]
+phones <- phones[, -c(1, 9, 10)] # removing name, height, width beacause they are useless
+phones <- phones %>% dplyr::group_by(brand) %>% dplyr::mutate(brand = mean(price)) # target encoding
+```
+
+```{r, include=FALSE}
+### ranger
+
+model_ranger <- ranger::ranger(price~., data = phones)
+explainer <- explain(model = model_ranger,
+                     data = phones,
+                     y = phones$price)
+
+```
+
+### PDP
+
+```{r}
+pdp <- model_profile(explainer, variables = c('brand', 'ram_gb', 'flash_gb', 'front_camera_mpix'))
+plot(pdp, geom = "profiles")
+```
+
+Narysowałem wykresy PDP dla 4 najbardziej wpływowych zmiennych w modelu. Zmienna brand jest po target encodingu, dlatego mogła być przedstawiona jako zmienna ciągła. Jak pokazują wyniki, przewidywana cena telefonu rośnie wraz ze wzrostem wielkości parametru. Wyjątkiem jest zmienna opisująca rozdzielczość przedniego aparatu. Rozkład ceny względem tej zmiennej przypomina rozkład jednostajny z drobnym wzrostem ceny w okolicach 10 mpx.
+
+### Liczba obserwacji w PDP
+
+```{r}
+pdp_1 <- model_profile(explainer, variables = c('brand', 'ram_gb', 'flash_gb', 'front_camera_mpix'), N = 1000, grid_points = 100)
+pdp_2 <- model_profile(explainer, variables = c('brand', 'ram_gb', 'flash_gb', 'front_camera_mpix'), N = 100, grid_points = 100)
+pdp_1$agr_profiles$`_label_` <- "1000 obserwacji"
+pdp_2$agr_profiles$`_label_` <- "100 obserwacji"
+plot(pdp_1, pdp_2)
+```
+
+W zależności od wybrania różnej liczby obserwacji biorących udział w PDP, otrzymujemy różne wykresy. Jeżeli wybierzemy więcej obserwacji, cena telefonu jest delikatnie wyższa niż w przypadku mniejszej liczby obserwacji. Ta zależność jest szczególnie widoczna dla małych wartości przewidywanej ceny.
+
+### PDP vs ALE
+
+```{r}
+ale <- model_profile(explainer, variables = c('brand', 'ram_gb', 'flash_gb', 'front_camera_mpix'), type = "accumulated", )
+# plot(ale, geom = "profiles")
+pdp$agr_profiles$`_label_` <- 'pdp'
+ale$agr_profiles$`_label_` <- 'ale'
+plot(pdp, ale)
+```
+
+Z wykresu porównującego działanie PDP oraz ALE również możemy wyciągnąć wnioski. ALE dla wybranych zmiennych przewiduje wyższe ceny niż PDP. Najwyraźniej można to zaobserwować na zmiennych brand oraz flash_gb. W przeciwieństwie do poprzedniego porównania, wartość przewidywanej ceny różni się dla poszczególnych zmiennych, a nie dla poszczególnych wartości przewidywanej ceny.

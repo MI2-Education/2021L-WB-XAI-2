@@ -1,0 +1,247 @@
+---
+title: "WB-XAI-2 - praca domowa 5"
+subtitle: "Mateusz Grzyb"
+output:
+  html_document:
+    df_print: paged
+---
+
+<br>
+
+![](https://static.turbosquid.com/Preview/2016/09/26__12_14_55/R0.pngE649D7B9-45F3-4207-B43D-8A06F77214CBLarge.jpg){width=25%}
+
+<br>
+
+## Wczytanie i obróbka danych
+
+Wczytane dane obrabiam w ten sam sposób, jak na poprzedniej pracy domowej.
+
+```{r message=FALSE}
+# wczytanie bibliotek
+library(OpenML)
+
+# wczytanie danych
+blood <- getOMLDataSet(data.id = 1464)
+blood <- blood$data
+
+# obrobka wstępna 
+row.names(blood) <- NULL
+names(blood) <- c('Recency', 'Frequency', 'Monetary', 'Time', 'Donated')
+blood$Donated <- factor(ifelse(blood$Donated==2, 1, 0))
+blood <- blood[-3]
+
+# dodanie zaproponowanej ostatnio zmiennej Intensity
+blood_m <- cbind(
+  blood[c('Recency', 'Frequency')],
+  Intensity=pmin(blood$Frequency/pmax(blood$Time-blood$Recency, 1), 1),
+  blood['Donated'])
+
+# podglad ramki danych
+head(blood_m)
+```
+
+<br>
+
+## Przygotowanie modelu
+
+Standardowo już przygotuję sprawdzony model typu ranger.
+
+```{r message=FALSE, warning=FALSE}
+library(mlr)
+library(PRROC)
+
+classif_task <- makeClassifTask(data=blood_m, target='Donated', positive=1)
+
+create_model <- function(name, ...) {
+  classif_lrn <- makeLearner(name, predict.type='prob', ...)
+  model <- train(classif_lrn, classif_task)
+  model
+}
+
+test_model <- function(model, type) {
+  pred <- predict(model, classif_task)$data$prob.1
+  if(type == 'roc' | type == 'pr') {
+    fg <- pred[blood_m$Donated==1]
+    bg <- pred[blood_m$Donated==0]
+    if(type == 'roc') {
+      plot(roc.curve(scores.class0=fg, scores.class1=bg, curve=T))
+    }
+    if(type == 'pr') {
+      plot(pr.curve(scores.class0=fg, scores.class1=bg, curve=T))
+    }
+  }
+  if(type == 'acc') {
+    acc <- measureACC(blood_m$Donated, as.numeric(pred>=0.5))
+    print(paste0('Model accuracy is: ', round(acc, 2)))
+  }
+}
+```
+
+```{r}
+ranger <- create_model('classif.ranger')
+test_model(ranger, 'acc')
+```
+
+```{r}
+test_model(ranger, 'roc')
+```
+
+```{r}
+test_model(ranger, 'pr')
+```
+
+<br>
+
+## Partial Dependence Profiles (PDP)
+
+```{r, message=FALSE}
+library(DALEX)
+library(DALEXtra)
+explainer <- explain(model=ranger, data=blood_m[, -4], y=as.numeric(blood_m[, 4]), label='ranger', colorize=FALSE)
+```
+
+<br>
+
+Zacznę od PDP. Zmiennych w modelu jest tylko 3, więc wykorzystuję wszystkie. Ponieważ obserwacji nie jest bardzo dużo, to nie ograniczam użytej ich liczby. Pozostałe parametry pozostawiam przy domyślnych wartościach.
+
+```{r}
+plot(model_profile(explainer, N=NULL), subtitle='')
+```
+
+Profil modelu przypomina znane już nam z wyjaśnień lokalnych zależności. Większe Frequency pozytywnie wpływa na predykcję, z pewnym dołkiem w okolicach 10-20 oddań krwi. Prawdopodobieństwo rośnie również wraz ze wzrostem Intensity, i co ciekawe, widoczny jest nawet dokładniej zbadany uprzednio spadek szans powyżej wartości 0.55. W przypadku Recency najkorzystniejsze są wartości małe, a zupełnie płaski ogon wynika prawdopodobnie ze znikomej liczby obserwacji w tym obszarze.
+
+<br>
+
+Sprawdzę jeszcze, skąd biorą się profile poszczególnych zmiennych. Liczbę wykorzystywanych obserwacji zmniejszam o połowę dla zachowania lepszej czytelności wykresu.
+
+```{r}
+plot(model_profile(explainer, variables='Frequency', N=748/2), geom='profiles')
+```
+
+```{r}
+plot(model_profile(explainer, variables='Intensity', N=748/2), geom='profiles')
+```
+
+```{r}
+plot(model_profile(explainer, variables='Recency', N=748/2), geom='profiles')
+```
+
+Jak widać poszczególne profile Ceteris Paribus nie różnią się zbytnio kształtem, a jedynie przesunięciem w pionie, ale w sposób płynny, bez wyraźnych przeskoków. W związku z tym nie decyduję się na zastosowanie clusteringu.
+
+<br>
+
+## Accumulated Local Dependence (ALE)
+
+Następnie przechodzę do ALE. Ponownie wykorzystuję wszystkie zmienne i obserwacje, a pozostałych parametrów nie zmieniam.
+
+```{r}
+plot(model_profile(explainer, N=NULL, type='accumulated'), subtitle='')
+```
+
+Wnioski dotyczące profili są analogiczne, jak w przypadku metody PDP. Dokładniejsze porównanie obydwu metod znajduje się w ostatnim rozdziale.
+
+<br>
+
+Sprawdzę jeszcze, skąd biorą się profile poszczególnych zmiennych. Ponownie liczbę wykorzystywanych obserwacji zmniejszam o połowę dla zachowania lepszej czytelności wykresu.
+
+```{r}
+plot(model_profile(explainer, variables='Frequency', N=748/2, type='accumulated'), geom='profiles')
+```
+
+```{r}
+plot(model_profile(explainer, variables='Intensity', N=748/2, type='accumulated'), geom='profiles')
+```
+
+```{r}
+plot(model_profile(explainer, variables='Recency', N=748/2, type='accumulated'), geom='profiles')
+```
+
+Oczywiście sytuacja jest taka sama (różne są wyłącznie profile zagregowane) i w dalszym ciągu nie widzę sensu przeprowadzania operacji klastrowania.
+
+<br>
+
+## Wpływ rozmiaru i rozkładu siatki na krzywe
+
+### PDP
+
+Zacznę od sprawdzenia wpływu rozmiaru siatki dla PDP na przykładzie zmiennej Frequency. Testuję rozmiar domyślny oraz 10-krotnie mniejszy i większy.
+
+```{r}
+pdp_grid_10 <- model_profile(explainer, variables='Frequency', N=NULL, grid_points=10)
+pdp_grid_10$agr_profiles$`_label_` <- 'PDP_grid_10'
+pdp_grid_100 <- model_profile(explainer, variables='Frequency', N=NULL, grid_points=100)
+pdp_grid_100$agr_profiles$`_label_` <- 'PDP_grid_100'
+pdp_grid_1000 <- model_profile(explainer, variables='Frequency', N=NULL, grid_points=1000)
+pdp_grid_1000$agr_profiles$`_label_` <- 'PDP_grid_1000'
+plot(pdp_grid_10, pdp_grid_100, pdp_grid_1000, title='PDP with different grid sizes', subtitle='')
+```
+
+Na powyższym wykresie możemy zobaczyć, że:
+
+* mniejszy rozmiar siatki ma swego rodzaju efekt wygładzający, ale ewidentnie pomija wiele detali, 
+
+* większy rozmiar siatki ujawnia większą liczbę szczegółów, ale w pewnym sensie wprowadza również większy szum. 
+
+Wniosek nie jest zaskakujący - dobór odpowiedniego rozmiaru siatki to kwestia kompromisu. Należy zrobić to tak, aby nie przegapić ważnych zależności, jednoczesnie nie przesadzając ze szczegółowością, która od pewnej, niestety dosyć rozmytej, granicy staje się swego rodzaju szumem utrudniającym interpretację modelu.
+
+<br>
+
+Następnie sprawdzimy wpływ rozkładu siatki dla PDP na przykładzie tej samej zmiennej.
+
+```{r}
+pdp_grid_quantiles <- model_profile(explainer, variables='Frequency', N=NULL, grid_points=100, variable_splits_type='quantiles')
+pdp_grid_quantiles$agr_profiles$`_label_` <- 'PDP_grid_quantiles'
+pdp_grid_uniform <- model_profile(explainer, variables='Frequency', N=NULL, grid_points=100, variable_splits_type='uniform')
+pdp_grid_uniform$agr_profiles$`_label_` <- 'PDP_grid_uniform'
+plot(pdp_grid_quantiles, pdp_grid_uniform, title='PDP with different split types', subtitle='')
+```
+
+Tym razem efekt jest dla mnie nieco zaskakujący, ponieważ równomierne rozłożenie punktów siatki daje bardziej szczegółową krzywą dla praktycznie całego nośnika zmiennej. Spodziewałem się, że rozkład oparty na kwantylach da więcej detali przynajmniej na pewnym przedziale wartości, ale w tym przypadku tak nie jest.
+
+<br>
+
+### ALE
+
+Teraz przejdę sprawdzenia wpływu rozmiaru siatki dla ALE na przykładzie zmiennej Recency.
+
+```{r}
+ale_grid_10 <- model_profile(explainer, variables='Recency', N=NULL, type='accumulated', grid_points=10)
+ale_grid_10$agr_profiles$`_label_` <- 'ALE_grid_10'
+ale_grid_100 <- model_profile(explainer, variables='Recency', N=NULL, type='accumulated', grid_points=100)
+ale_grid_100$agr_profiles$`_label_` <- 'ALE_grid_100'
+ale_grid_1000 <- model_profile(explainer, variables='Recency', N=NULL, type='accumulated', grid_points=1000)
+ale_grid_1000$agr_profiles$`_label_` <- 'ALE_grid_1000'
+plot(ale_grid_10, ale_grid_100, ale_grid_1000,title='ALE with different grid sizes', subtitle='')
+```
+
+Wnioski są analogiczne, jak w poprzednim podrozdziale. Warto odnotować efekt coraz to mocniejszego podnoszenia się ogona dla większej ilości punktów siatce.
+
+<br>
+
+Następnie sprawdzę wpływ rozkładu siatki dla PDP na przykładzie tej samej zmiennej.
+
+```{r}
+ale_grid_quantiles <- model_profile(explainer, variables='Recency', N=NULL, type='accumulated', grid_points=100, variable_splits_type='quantiles')
+ale_grid_quantiles$agr_profiles$`_label_` <- 'ALE_grid_quantiles'
+ale_grid_uniform <- model_profile(explainer, variables='Recency', N=NULL, type='accumulated', grid_points=100, variable_splits_type='uniform')
+ale_grid_uniform$agr_profiles$`_label_` <- 'ALE_grid_uniform'
+plot(ale_grid_quantiles, ale_grid_uniform, title='ALE with different split types', subtitle='')
+```
+
+Tutaj również wnioski są podobne, jak w przypadku metody PDP.
+
+<br>
+
+## Porównanie PDP i ALE
+
+Ostatnim już eksperymentem jest porównanie krzywych uzyskanych za pomocą obydwu metod. Robię to dla wszystkich zmiennych, przy użyciu wszystkich obserwacji i nie zmieniając wartości pozostałych parametrów.
+
+```{r}
+pdp <- model_profile(explainer, N=NULL)
+pdp$agr_profiles$`_label_` <- 'PDP'
+ale <- model_profile(explainer, N=NULL, type='accumulated')
+ale$agr_profiles$`_label_` <- 'ALE'
+plot(pdp, ale, title='PDP vs ALE', subtitle='')
+```
+
+Jak widać na powyższym wykresie różnica zdecydowanie występuje, ale jednocześnie nie jest dramatyczna. W przypadku zmiennej Frequency kształt jest bardzo podobny i tylko większe podniesienie krzywej PDP stanowi różnicę. Dla zmiennej Intensity różnica jest jeszcze mniejsza, ponieważ ponownie kształty są zbliżone, ale przesunięcie jest znacznie mniejsze. W końcu dla zmniennej Recency sytuacja jest w pewnym sensie odwrotna w stosunku do pierwszej opisanej zmiennej - poraz kolejny kształty są podobne, ale tym razem to krzywa ALE znajduje się wyżej. Być może warto odnotować również fakt, że w przypadku metody ALE ogony są jakby silniej skierowane w dół, natomiast nie jestem w stanie zaproponować wytłumaczenia tego fenomenu.

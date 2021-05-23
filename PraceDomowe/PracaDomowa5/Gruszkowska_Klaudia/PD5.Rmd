@@ -1,0 +1,144 @@
+---
+title: "PD5"
+author: "Klaudia Gruszkowska"
+date: "11 05 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Model
+
+### Wczytanie przygotowanych danych i podział na zbiór testowy i treningowy
+```{r,message=FALSE}
+library('randomForest')
+library("ggplot2")
+
+cleaned_housing <- read.csv("cleaned_housing.csv")
+
+set.seed(1738)
+
+sample = sample.int(n = nrow(cleaned_housing), size = floor(.8*nrow(cleaned_housing)), replace = F)
+train = cleaned_housing[sample, ] 
+test  = cleaned_housing[-sample, ] 
+
+train_y = train[,'median_house_value']
+train_x = train[, names(train) !='median_house_value']
+```
+
+### Model lasu losowego
+```{r,message=FALSE}
+
+rf_model = randomForest(train_x, y = train_y , ntree = 500, importance = TRUE)
+
+```
+
+
+### Explainer
+```{r,message=FALSE}
+library(DALEX)
+library(DALEXtra)
+cleaned_housing$income = cut(cleaned_housing$median_income,breaks = 2)
+
+explainer <- DALEX::explain(model = rf_model,
+                     data = cleaned_housing[, -14],
+                     y = cleaned_housing[, 14], 
+                     colorize=FALSE,
+                     label = "Random Forest")
+```
+
+### PDP
+
+Najpierw stworzę model PDP. Wykorzystam tylko najważniejsze zmienne aby nie zaciemniać obrazu. Wykorzystam zmienne 'latitude','longitude','median_income' i 'households', które we wcześniejszych analizach zostały uznane za najważniejsze. Dodatkowo ustawiam parametr groups na wcześniej utworzoną zmienną kategoryczną 'income', która dzieli zmienną median_income na dwie wartości. Zmienna nie została uwzględniona podczas uczeniu modelu a dopiero podczas tworzenia explainera.
+
+```{r}
+pdp_1 <- model_profile(explainer,groups = 'income',variables = c('latitude','longitude','median_income','households'))
+plot(pdp_1, geom = 'profiles')
+```
+
+Największe różnice dla zmiennej ma median_income. Przy wzroście wartości zmiennej zwiększa się również przewidywana wartość domu. Jest to zgodne z przewidywaniami, jak i z wcześniejszymi analizami. Im bogatsza dzielnica tym wyższa cena domu. Dodatkowo możemy zauważyć, że przy małych wartościach tej zmiennej mamy wiele 'małych odchyleń'. Wykres nie jest gładki, a przy większych jest już prawie ciągłą poziomą linią. Może to być spowodowane tym, że wysokich wartości tej zmiennej jest stosunkowo mało (wiemy z EDA), albo tym, że zmienna celu jest ucięta do wartości 500001. To spostrzeżenie dotyczy również zmiennej households.
+
+Podział na grupy pokazuje, że dla wyższych wartości zmiennej median_income, czyli większej wartości mediany przychodu wyższe są też predykcje. Dlatego linia niebieska jest narysowane wyżej. Dodatkowo na wykresie zmiennej households przy małej jej wartości dla grupy o niższych przychodach mamy 'dołek', a dla grupy o wyższych przychodach w tym miejscu jest 'górka'. Jedną z możliwych przyczyn może być np : w biedniejszej dzielnicy (niższe dochody) mała liczba gospodarstw domowych może oznaczać trochę opuszczoną już dzielnicę, gdy w drugim przypadku bogatej dzielnicy (wysokie dochody) może być oznaką bogactwa, luksusowej dzielnicy o dużych willach i małej ich ilości. Jest to jednak jedna z hipotez dlaczego takie różnice widzimy na wykresie.
+
+### ALE
+
+Następnie tworzę model ALE. Zmienne zostają takie same jak wcześniej.
+
+```{r}
+ale_1 <-model_profile(explainer,type="accumulated",variables = c('latitude','longitude','median_income','households'))
+plot(ale_1,geom = 'profiles')
+```
+
+Wykresy ALE są niemal identyczne do wykresów PDP.
+
+### Zmiana rozkładu siatki i ustawienia punktów
+
+```{r}
+pdp_2 <- model_profile(explainer,variables = 'median_income',grid_points = 10)
+pdp_3 <- model_profile(explainer,variables = 'median_income',grid_points = 100)
+pdp_4 <- model_profile(explainer,variables = 'median_income',grid_points = 1000)
+pdp_2$agr_profiles$`_label_` <- "grid_points : 10"
+pdp_3$agr_profiles$`_label_` <- "grid_points : 100"
+pdp_4$agr_profiles$`_label_` <- "grid_points : 1000"
+plot(pdp_2, pdp_3,pdp_4)
+```
+
+Manipuluję wartościami parametru grid_points ustawiając go na 10, 100 i 1000. Możemy zauważyć,że dla zmiennej 10, linia wydaje się być prostą łamaną. Jest zdecydowanie bardziej wygładzona, ale też traci niektóre szczegóły. Dla 100 i 1000 wykresy są niemal identyczne. Im większa wartość tym bardziej szczegółowy wykres.
+
+
+```{r}
+ale_2 <- model_profile(explainer,type="accumulated",variables = 'longitude',grid_points = 10)
+ale_3 <- model_profile(explainer,type="accumulated",variables = 'longitude',grid_points = 100)
+ale_4 <- model_profile(explainer,type="accumulated",variables = 'longitude',grid_points = 1000)
+ale_2$agr_profiles$`_label_` <- "grid_points : 10"
+ale_3$agr_profiles$`_label_` <- "grid_points : 100"
+ale_4$agr_profiles$`_label_` <- "grid_points : 1000"
+plot(ale_2, ale_3,ale_4)
+```
+
+Gdy te same wartości parametru grid_points przełożymy na profile ALE to wniosek jest ten sam, choć zmiany są widoczniejsze. Im mniejsza wartość tego parametru tym mniej szczegółowy jest wykres.
+
+
+```{r}
+pdp_5 <- model_profile(explainer,variables = 'median_income',variable_splits_type = "uniform")
+pdp_6 <- model_profile(explainer,variables = 'median_income',variable_splits_type = 'quantiles')
+pdp_5$agr_profiles$`_label_` <- "uniform"
+pdp_6$agr_profiles$`_label_` <- "quantiles"
+
+plot(pdp_5,pdp_6)
+```
+
+Co ciekawe dla rozkładu równomiernego jak i kwantylowego mamy prawie takie same wykresy. Spodziewałam się bardziej dokładnego wykresu opartego na kwantylach dla mniejszych wartości, ale różnice są niewielkie.
+
+
+```{r}
+ale_5 <- model_profile(explainer,type="accumulated",variables = 'longitude',variable_splits_type = "uniform")
+ale_6 <- model_profile(explainer,type="accumulated",variables = 'longitude',variable_splits_type = 'quantiles')
+ale_5$agr_profiles$`_label_` <- "uniform"
+ale_6$agr_profiles$`_label_` <- "quantiles"
+
+plot(ale_5,ale_6)
+```
+
+W tym wypadku wynik zmiany rozkładu punktów na siatce jest dla mnie niezrozumiały. Jedyną zmianą pomiędzy tymi wykresami jest to, że rozkład kwantylowy jest przeniesiony niżej niż równomierny. Nie jest bardziej dokładny w szczególnych miejscach ani mniej dokładny w innych.
+
+### Porównanie PDP i ALE
+
+```{r}
+pdp <- model_profile(explainer,variables = 'median_income')
+ale <- model_profile(explainer, variables = 'median_income',type="accumulated")
+
+pdp$agr_profiles$`_label_` <- "pdp"
+ale$agr_profiles$`_label_` <- "ale"
+
+plot(pdp, ale)
+```
+
+Porównuje tutaj wykresy ALE i PDP dla zmiennej 'median_income' ale w pierwszych wykresach tej pracy domowej widać, że i dla pozostałych zmiennych tendencja jest zachowana, czyli wykresy są niemal identyczne. 
+
+### Wnioski
+- wykresy ALE i PDP przy domyślnych ustawieniach są niemal identyczne
+- zmiana wartości parametru grid_points zmienia szczegółowość wykresów
+- zmiana wartości parametru wyznaczania punktów ma dziwne wyniki, dla parametru PDP nie zmienia za dużo, a przy ALE podnosi lub obniża prawie identyczną linię.

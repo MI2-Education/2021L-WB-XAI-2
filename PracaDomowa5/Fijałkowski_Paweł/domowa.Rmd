@@ -1,0 +1,96 @@
+---
+title: "PD5 XAI"
+author: "Paweł Fijałkowski"
+date: "10 05 2021"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+library(DALEX)
+library(DALEXtra)
+options(stringsAsFactors = TRUE)
+data <- read.csv("data-credit.csv")
+model <- ranger::ranger(class~., data = data, classification = TRUE, probability = TRUE)
+explainer <- explain(model = model, data = data[,-21], y = data$class)
+```
+
+### Partial Dependence Plots (PDP)
+
+Aby analiza `PDP` miała "sens", musimy wybrać zmienne które istotnie wpływają na war,tość predykcji naszego modelu. Na podstawie poprzednich prac (lokalnych wyjaśnień `breakdown`, `SHAP`, `lime` etc.) możemy wyciągnąć wnioski, iż do najbardziej istotnych zmiennych należą:
+
+1. credit_amount
+2. duration
+3. checking_status
+4. age
+
+```{r pdpcalculations}
+pdp_checking <- model_profile(explainer, variables = "checking_status")
+pdp_duration <- model_profile(explainer, variables = "duration")
+pdp_credit_amount <- model_profile(explainer, variables = "credit_amount")
+pdp_age <- model_profile(explainer, variables = "age")
+```
+
+```{r plotpdp}
+plot(pdp_checking) # zmienna kategoryczna
+plot(pdp_age, pdp_credit_amount, pdp_duration) # zmienne ciągłe
+```
+
+Obserwujemy zgodność wyjaśnień lokalnych z globalnym `PDP`. Zgodnie z `lime` i `SHAP`, rosnąca wysokość i długość zaciągniętego kredytu wpływa negatywnie na klasyfikację kredytobiorcy jako `good`. Podobnie w przypadku wysokiego salda konta klienta, prawdopodobieństwo klasyfikacji rośnie (choć tutaj różnice są mniej zauważalne).
+
+### Accumulated Local Dependence (ALE)
+
+Accumulated Local Dependence jest alternatywną do `PDP` metodą globalnego wyjaśnienia modelu czarnoskrzynkowego. Jego główną przewagą nad `PDP` jest częściowe uodpornienie na korelację zmiennych modelu.
+
+Podobnie, z uwagi na ważność, weźmiemy na warsztat zmienne określone w poprzednim akapicie.
+
+
+```{r alecalculations}
+ale_checking <- model_profile(explainer, variables = "checking_status", type="accumulated")
+ale_duration <- model_profile(explainer, variables = "duration", type="accumulated")
+ale_credit_amount <- model_profile(explainer, variables = "credit_amount", type="accumulated")
+ale_age <- model_profile(explainer, variables = "age", type="accumulated")
+```
+
+```{r plotale}
+plot(ale_checking) # zmienna kategoryczna
+plot(ale_age, ale_credit_amount, ale_duration) # zmienne ciągłe
+```
+
+Porównując wyniki `plotale` i `plotpdp`, możemy z dużą pewnością stwierdzić, że reprezntują tą samą zależność korelacyjną (krzywe są łudząco podobne). Różnica jaką możemy dostrzec są wahania w wartościach faktycznego wpływu na predykcję (np. w przypadku zmiennej `age`). W przypadku `ALE` wartości są większe, a wykres przesunięty "do góry" względem `PDP`.
+
+### Testowanie siatek 
+
+```{r gridscalculation}
+make_plot_pdp <- function(n, point_amount)
+{
+    pdp_dur <- model_profile(explainer, variables = "duration", N = n, grid_points = point_amount)
+    pdp_cred <- model_profile(explainer, variables = "credit_amount", N = n, grid_points = point_amount)
+    pdp_age <- model_profile(explainer, variables = "age", N = n, grid_points = point_amount)
+    print(plot(pdp_dur, pdp_cred, pdp_age))
+    sprintf("PDP N=%d grid_points=%d", n, point_amount)
+}
+make_plot_ale <- function(n, point_amount)
+{
+    ale_dur <- model_profile(explainer, variables = "duration", N = n, grid_points = point_amount)
+    ale_cred <- model_profile(explainer, variables = "credit_amount", N = n, grid_points = point_amount)
+    ale_age <- model_profile(explainer, variables = "age", N = n, grid_points = point_amount)
+    print(plot(ale_dur, ale_cred, ale_age))
+    sprintf("PDP N=%d grid_points=%d", n, point_amount)
+}
+```
+
+```{r gridpdp}
+N <- c(5, 25, 50)
+points <- c(10, 50, 100)
+for(n in N){
+  for(point_amount in points){
+    make_plot_pdp(n, point_amount)
+  }
+}
+```
+
+Widzimy, więc znaczący wpływ wyboru dyskretnej siatki parametrów na otrzymywany rezultat. W przypadku małej ilości próbki (niskiej "gęstości" siatki), krzywe nie pozwalają na wyciąganie jednoznacznych wniosków. Wraz z zagęszczaniem siatki, krzywa nabiera "kształtu". Aby przeprowadzić rzetelną eksplanację, należy przeszukać przestrzeń siatki w poszukiwaniu obszaru w którym generowane wyjaśnienie jest jak najstabilniejsze.
+
+
+

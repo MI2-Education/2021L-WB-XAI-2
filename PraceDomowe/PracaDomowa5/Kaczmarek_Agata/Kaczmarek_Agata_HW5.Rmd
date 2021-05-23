@@ -1,0 +1,145 @@
+---
+title: "HW5"
+author: "Agata Kaczmarek"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#biblioteki
+library(DALEX)
+library(DALEXtra)
+library(mlr)
+library(xgboost)
+set.seed(123)
+model_type.dalex_explainer <- DALEXtra::model_type.dalex_explainer
+predict_model.dalex_explainer <- DALEXtra::predict_model.dalex_explainer
+#dane
+phones2 <- read.csv("phones.csv")
+```
+
+### Wstęp
+
+W tej pracy skupię się na policzeniu Partial Dependence Profiles oraz Accumulated Local Dependence dla wybranych zmiennych dla mojego zbioru danych dla dwóch różnych modeli. Wypróbuję także różne kombinacje rozmiaru siatki oraz rozkładu jej punktów i sprawdzę jakie mają one wpływ na PDP i ALE. Porównam również PDP iALE. 
+Mój zbiór dotyczy telefonów. Dane użyte do tej pracy zostały przekształcone następująco: wszystkie braki danych zostały zamienione na wartość 0. Zostało tak zrobione, ponieważ braki danych występowały jedynie w kolumnach mówiących o aparacie, czyli dany telefon go nie posiadał. Kolumny *name*, *height_px*, *width_px* zostały usunięte. Takie działanie jest skutkiem poprzednich analiz dotyczących zbioru, wysokiej korelacji między zmiennymi (*diag*, *height_px*, *width_px*) a także unikalnością wartości w kolumnie *name*.
+
+```{r, include=FALSE}
+phones2[is.na(phones2)] <- 0 
+phones2 <- phones2[phones2$back_camera_mpix < 90 &
+                   phones2$battery_mAh < 7000 &
+                   phones2$flash_gb < 400 &
+                   phones2$front_camera_mpix < 40, ]
+phones2 <- phones2[, -c(1, 9, 10)]
+```
+
+### Modele
+
+Na potrzeby poniższej analizy stworzę dwa modele:
+Las losowy: 
+
+```{r}
+model_ranger <- ranger::ranger(price~., data=phones2[,-1], seed=123, num.trees = 50)
+
+explainer_ranger <- DALEX::explain(model = model_ranger,
+                     data = phones2[,-11],
+                     y = phones2$price,
+                     colorize = FALSE)
+
+     
+```
+
+
+Oraz SVM:
+
+```{r}
+phones2$brand <-as.factor(phones2$brand)
+regr_task <-makeRegrTask(data=phones2, target="price")
+regr_learner_1 <- makeLearner("regr.svm")
+model_svm <-train(regr_learner_1, regr_task)
+
+explainer_svm <- DALEX::explain(model = model_svm,
+                     data = phones2[,-11],
+                     y = phones2$price,
+                     colorize = FALSE)
+```
+
+### Partial Dependence Profiles (PDP)
+
+
+Poniżej dla wybranych zmiennych z mojego zbioru policzę PDP:
+
+```{r}
+pdp_2 <- model_profile(explainer_ranger, variables=c("back_camera_mpix", "battery_mAh", "ram_gb", "diag"))
+pdp_svm_2 <- model_profile(explainer_svm, variables=c("back_camera_mpix", "battery_mAh", "ram_gb", "diag"))
+
+pdp_2$agr_profiles$`_label_` <- "ranger"
+pdp_svm_2$agr_profiles$`_label_` <- "svm"
+plot(pdp_2, pdp_svm_2)
+
+
+plot(pdp_2, geom = "profiles")
+plot(pdp_svm_2, geom = "profiles")
+
+```
+
+Jak widać powyżej PDP dla obu modeli wygląda zupełnie różnie - dla svm nie ma wyraźnich zmian, są one bardzo łagodne, w przeciwieństwie do tych dla rangera. Największe różnice pomiędzy modelami można dostrzec pomiędzy wykresami dla *battery_mAH* oraz *diag*. Dla wykresu zbiorczego możemy również zaobserwować, że dla svm wszystkie linie są łagodne, a dla rangera wiele jest jeszcze bardziej zmiennych (pofalowanych, szpiczastych) niż poprzednio.
+
+Jeśli popatrzymy szczegółowo na wykresy dla modelu ranger to można zauważyć znaczne zmiany w predykcjach w zależności o wzrostu parametru szczególnie dla większości badanych parametrów. Np wraz ze wzrostem *ram_gb* znacznie rośnie przewidywana cena, co jest raczej rzeczywistym założeniem. Co ciekawe jednak zwiększanie wartości *back_camera_mpix* nie powoduje wzrostu wartości predykcji. Możemy zauważyć również ciekawy spadek dla przekątnej w okolicy 5.5-6.5.
+
+### Accumulated Local Dependence (ALE)
+
+Poniżej dla wybranych zmiennych z mojego zbioru policzę ALE:
+
+```{r}
+
+pdp_3 <- model_profile(explainer_ranger, variables=c("back_camera_mpix", "battery_mAh", "ram_gb", "diag"), type = "accumulated")
+pdp_svm_3 <- model_profile(explainer_svm, variables=c("back_camera_mpix", "battery_mAh", "ram_gb", "diag"), type = "accumulated")
+
+pdp_3$agr_profiles$`_label_` <- "ranger"
+pdp_svm_3$agr_profiles$`_label_` <- "svm"
+plot(pdp_3, pdp_svm_3)
+```
+
+Powyżej ALE dla rangera i dla SVM. Również widać różnice między modelami.W tym przypadku zwraca uwagę również zależność wzrostu wielkości baterii i spadku predykcji. Jets to ciekawą obserwacją, zastanawiającą.
+
+### Różne kombinacje rozmiaru siatki oraz rozkładu jej punktów. Wpływ na krzywe.
+
+Zobaczmy jak na wybrane z wyżej uzyskanych wyniówi wpłynie zmiana rozmiaru siatki oraz zmiana rozkładu punktów. 
+
+```{r}
+pdp_2_s1 <- model_profile(explainer_ranger, variables="back_camera_mpix", N=1000, grid_points=10)
+pdp_2_s2 <- model_profile(explainer_ranger, variables="back_camera_mpix", N=1000, grid_points=100)
+pdp_2_s3 <- model_profile(explainer_ranger, variables="back_camera_mpix", N=100, grid_points=100)
+
+pdp_2_s1$agr_profiles$`_label_` <- "N=1000, grid_points=10"
+pdp_2_s2$agr_profiles$`_label_` <- "N=1000, grid_points=100"
+pdp_2_s3$agr_profiles$`_label_` <- "N=100, grid_points=100"
+plot(pdp_2_s1, pdp_2_s2, pdp_2_s3)
+
+pdp_2_s4 <- model_profile(explainer_svm, variables="back_camera_mpix", N=1000, grid_points=10)
+pdp_2_s5 <- model_profile(explainer_svm, variables="back_camera_mpix", N=1000, grid_points=100)
+pdp_2_s6 <- model_profile(explainer_svm, variables="back_camera_mpix", N=100, grid_points=100)
+pdp_2_s4$agr_profiles$`_label_` <- "N=1000, grid_points=10"
+pdp_2_s5$agr_profiles$`_label_` <- "N=1000, grid_points=100"
+pdp_2_s6$agr_profiles$`_label_` <- "N=100, grid_points=100"
+plot(pdp_2_s1, pdp_2_s2, pdp_2_s3)
+```
+
+##### Jaki miało to wpływ na krzywe?
+
+Zmniejszona liczba *grid_points* powodowała mniej punktów zmian na krzywej, bliżej jej było do linii prostej niż pozostałym przypadkom, była to prostsza łamana. Zmiana *N* nie wpłynęła bardzo znacząco na wyniki, dla obu modeli wykresy niebieski i zielony są do siebie bardzo zbliżone. Nieznacznie większą średnią predykcję uzyskujemy jednak dla mniejszego *N*.
+
+
+### PDP vs ALE
+
+```{r}
+pdp_2$agr_profiles$`_label_` <- "PDP"
+pdp_3$agr_profiles$`_label_` <- "ALE"
+plot(pdp_2, pdp_3)
+```
+
+Wykresy przy użyciu obu funkcji są dość podobne, nieznacznie większą średnią predykcję pokazuje PDP, w szczególności dla *battery_mAh* oraz *ram_gb*.
+
+### Komentarz i podsumowanie
+
+
+W powyższej pracy dużo większe różnice mogliśmy zaobserwować, gdy porównywaliśmy wykresy stworzone dla dwóch różnych modeli niż pomiędzy PDP a ALE. Można powiedzieć, że przy ustalonych wartościach parametrów, wykresy dla PDP oraz ALE są niemal identyczne. Liczba *grid_points* w przypadkach obu krzywych miała większy wpływ na kształt krzywej niż *N*.

@@ -1,0 +1,109 @@
+---
+title: "Chylak_Maciej_PD5"
+output: html_document
+---
+
+
+## Wczytanie ramki danych oraz jej transformacja
+
+```{r message=FALSE}
+library(OpenML)
+
+blood <- getOMLDataSet(data.id = 1464)
+blood <- blood$data
+row.names(blood) <- NULL
+names(blood) <- c('Recency', 'Frequency', 'Monetary', 'Time', 'Donated')
+blood$Donated <- factor(ifelse(blood$Donated==2, 1, 0))
+blood <- blood[-3]
+blood_m <- cbind(
+  blood[c('Recency', 'Frequency')],
+  Intensity=blood$Frequency/pmax(blood$Time-blood$Recency, 1),
+  blood['Donated'])
+head(blood_m)
+```
+
+
+## Stworzenie modelu
+
+```{r message=FALSE}
+library(mlr)
+library(ranger)
+
+corr <- round(cor(blood_m[-4], method='spearman'), 2)
+c2 <- apply(corr, 1, FUN=function(x) {sum(x^2)})
+c2 <- c2/sum(c2)
+classif_task4 <- makeClassifTask(id='blood4', data=blood_m, target='Donated')
+classif_lrn4 <- makeLearner('classif.ranger', predict.type='prob', split.select.weights=c2)
+model4 <- train(classif_lrn4, classif_task4)
+```
+
+```{r message=FALSE}
+library(DALEX)
+library(DALEXtra)
+explainer <- explain(model=model4, data=blood_m, x=blood[ , c(1,2,3)], y=as.numeric(blood$Donated), label='mlr.ranger', colorize=FALSE)
+model_type.dalex_explainer <- model_type.dalex_explainer
+predict_model.dalex_explainer <- predict_model.dalex_explainer
+```
+
+## Partial Dependence Profiles
+
+```{r}
+pdp <- model_profile(explainer) 
+plot(pdp)
+```
+
+Na naszym profilu modelu możemy zauważyc, ze:
+
+* Wraz ze wzrostem czestotliwosci oddawania krwi roslo prawdopodobienstwo oddania krwi
+* Mozemy zauwazyc nietypowy spadek Intensity w okolicy 0.5, jest to najprawdopodobniej zpowodowane wypaleniem, szerzej opisanym w naszym projekcie
+* Mozemy zauwazyc, ze im dawniej osoba oddala krew, tym jest mniejsza szansa na to, ze zrobi to ponownie (oczywiscie nie jest to funkcja scisle malejaca)
+
+### Dla roznego rozmiaru siatki
+
+```{r}
+pdp1 <- model_profile(explainer, grid_points=10) 
+plot(pdp1)
+```
+```{r}
+pdp2 <- model_profile(explainer, grid_points=20) 
+plot(pdp2)
+```
+
+```{r}
+pdp3 <- model_profile(explainer, grid_points=30) 
+plot(pdp3)
+```
+
+Mozemy zauwazyc, ze wraz ze wzrostem rozmiaru siatki nasze wykresy zdaja sie byc bardziej dostosowane do lokalnych odchylen (przestaja byc smooth). Zbytnie dostosowanie sie moze zostac potraktowane jako wada.
+
+
+## Accumulated Local Effects
+
+```{r}
+ale <- model_profile(explainer, type="accumulated")
+plot(ale)
+```
+
+Warto zauwazyc, ze w przypadku Accumulated Local Effects wnioski wplynace z wykresu beda identyczne. Tym, co odroznia oba wykresy jest obserwowane przesuniecie wykresow Intensity oraz Recency o dodatni y. Natomiast jezeli chodzi o sam ksztalt krzywych, to sa one niemalze identyczne.
+
+### Dla roznego rozmiaru siatki
+
+
+```{r}
+ale1 <- model_profile(explainer, type="accumulated", grid_points=10)
+plot(ale1)
+```
+
+
+```{r}
+ale2 <- model_profile(explainer, type="accumulated", grid_points=20)
+plot(ale2)
+```
+
+
+```{r}
+ale3 <- model_profile(explainer, type="accumulated", grid_points=30)
+plot(ale3)
+```
+
+Analogicznie jak w przypadku PDP.

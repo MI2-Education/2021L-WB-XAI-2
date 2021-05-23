@@ -1,0 +1,222 @@
+---
+title: "Warsztaty badawcze - XAI - Praca domowa 5"
+author: "Paulina Jaszczuk"
+date: "13 05 2021"
+output: html_document
+---
+
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(mlr)
+library(DALEX)
+library(DALEXtra)
+library(pROC)
+library(plyr)
+library(OpenML)
+```
+
+## Wczytanie danych
+
+```{r data}
+df <- read.csv("C:\\Users\\pauli\\warsztaty_badawcze\\german_credit.csv")
+
+class_numerical <- model.matrix(~ 0 + class, df)
+df$class <- class_numerical[,"classgood"]
+
+```
+
+
+Dane zostały przekształcone analogicznie jak w pracy domowej 1. 
+
+## Przygotowanie modelu i explainera (ranger)
+
+```{r model_explainer_1, results=FALSE}
+model <- ranger::ranger(class~., data = df, classification = TRUE, probability = TRUE)
+
+explainer <- DALEX::explain(model = model,
+                     data = df[,-21],
+                     y = df$class)
+```
+
+Nasz model przewiduje prawdopodobieństwo klasy `bad`, czyli złego kredytobiorcy.
+
+## Partial Dependence Profiles
+
+W analizie wykorzystam zmienne `duration`, `age` i `credit amount`, bo miały one największy wpływ na predykcję modelu i są numeryczne. 
+
+```{r pdp}
+pdp1 <- model_profile(explainer, variables = "duration")
+pdp2 <- model_profile(explainer, variables = "age")
+pdp3 <- model_profile(explainer, variables = "credit_amount")
+
+plot(pdp1, pdp2, pdp3)
+```
+
+Wyniki nie są dla nas zaskoczeniem i pokrywają się z poprzednimi ustaleniami - im starszy klient, tym niższe ryzyko kredytowe (poza małym wzrostem mniej więcej po 50 roku życia - możliwe, że chodzi o przejście na emeryturę i brak pracy zarobkowej, co często zmniejsza budżet), im wyższy kredyt, tym większe ryzyko ( początkowa wysoka wartość może być związana z tym, że klienci biorący kredyty na małe kwoty mogą mieć problem z płynnością finansową) oraz im dłuższy okres kredytu, tym większe ryzyko. Widzimy też, że najbardziej na predykcję 'złego kredytobiorcy' wpływa wysokość kredytu - wszakże to on jest bezpośrednim przedmiotem spłaty.
+
+## Accumulated Local Dependence
+
+```{r ale}
+ale1 <- model_profile(explainer, variables = "duration", type = "accumulated")
+ale2 <- model_profile(explainer, variables = "age", type = "accumulated")
+ale3 <- model_profile(explainer, variables = "credit_amount", type = "accumulated")
+
+plot(ale1, ale2, ale3)
+```
+
+Na wykresach ALE widzimy przesuniętą w dół krzywą `credit amount`. Być może jest to wynik korelacji tej cechy z cechę `duration` (im wyższa kwota kredytu, tym dłużej jest on spłacany).
+
+## Różne kombinacje rozmiaru siatki
+
+Przeanalizujemy różne wartości siatki (10, 100 i 1000) oddzielnie dla PDP i ALE oraz z podziałem na różną liczbę wziętych obserwacji (50, 500 i wszystkie czyli 1000. Domyślnie N = 100).
+
+### PDP
+
+
+```{r pdpgrid10_1,  fig.height=4}
+pdp1 <- model_profile(explainer, variables = "duration", N = 50, grid_points = 10)
+pdp2 <- model_profile(explainer, variables = "age", N = 50, grid_points = 10)
+pdp3 <- model_profile(explainer, variables = "credit_amount", N = 50, grid_points = 10)
+plot(pdp1, pdp2, pdp3)
+```
+
+```{r pdpgrid10_2,  fig.height=4}
+pdp1 <- model_profile(explainer, variables = "duration", N = 500, grid_points = 10)
+pdp2 <- model_profile(explainer, variables = "age", N = 500, grid_points = 10)
+pdp3 <- model_profile(explainer, variables = "credit_amount", N = 500, grid_points = 10)
+
+plot(pdp1, pdp2, pdp3)
+```
+
+```{r pdpgrid10_3,  fig.height=4}
+pdp1 <- model_profile(explainer, variables = "duration", N = NULL, grid_points = 10)
+pdp2 <- model_profile(explainer, variables = "age", N = NULL, grid_points = 10)
+pdp3 <- model_profile(explainer, variables = "credit_amount", N = NULL, grid_points = 10)
+
+plot(pdp1, pdp2, pdp3)
+```
+
+```{r pdpgrid100_1,  fig.height=4}
+pdp1 <- model_profile(explainer, variables = "duration", N = 50, grid_points = 100)
+pdp2 <- model_profile(explainer, variables = "age", N = 50, grid_points = 100)
+pdp3 <- model_profile(explainer, variables = "credit_amount", N = 50, grid_points = 100)
+
+plot(pdp1, pdp2, pdp3)
+```
+
+```{r pdpgrid100_2,  fig.height=4}
+pdp1 <- model_profile(explainer, variables = "duration", N = 500, grid_points = 100)
+pdp2 <- model_profile(explainer, variables = "age", N = 500, grid_points = 100)
+pdp3 <- model_profile(explainer, variables = "credit_amount", N = 500, grid_points = 100)
+
+plot(pdp1, pdp2, pdp3)
+```
+
+```{r pdpgrid100_3,  fig.height=4}
+pdp1 <- model_profile(explainer, variables = "duration", N = NULL, grid_points = 100)
+pdp2 <- model_profile(explainer, variables = "age", N = NULL, grid_points = 100)
+pdp3 <- model_profile(explainer, variables = "credit_amount", N = NULL, grid_points = 100)
+
+plot(pdp1, pdp2, pdp3)
+```
+
+```{r pdpgrid1000_1,  fig.height=4}
+pdp1 <- model_profile(explainer, variables = "duration", N = 50, grid_points = 1000)
+pdp2 <- model_profile(explainer, variables = "age", N = 50, grid_points = 1000)
+pdp3 <- model_profile(explainer, variables = "credit_amount", N = 50, grid_points = 1000)
+
+plot(pdp1, pdp2, pdp3)
+```
+
+```{r pdpgrid1000_2,  fig.height=4}
+pdp1 <- model_profile(explainer, variables = "duration", N = 500, grid_points = 1000)
+pdp2 <- model_profile(explainer, variables = "age", N = 500, grid_points = 1000)
+pdp3 <- model_profile(explainer, variables = "credit_amount", N = 500, grid_points = 1000)
+
+plot(pdp1, pdp2, pdp3)
+```
+
+```{r pdpgrid1000_3,  fig.height=4}
+pdp1 <- model_profile(explainer, variables = "duration", N = NULL, grid_points = 1000)
+pdp2 <- model_profile(explainer, variables = "age", N = NULL, grid_points = 1000)
+pdp3 <- model_profile(explainer, variables = "credit_amount", N = NULL, grid_points = 1000)
+
+plot(pdp1, pdp2, pdp3)
+```
+
+
+### ALE
+
+```{r alegrid10_1,  fig.height=4}
+ale1 <- model_profile(explainer, variables = "duration", type = "accumulated", N = 50, grid_points = 10)
+ale2 <- model_profile(explainer, variables = "age", type = "accumulated", N = 50, grid_points = 10)
+ale3 <- model_profile(explainer, variables = "credit_amount", type = "accumulated", N = 50, grid_points = 10)
+plot(ale1, ale2, ale3)
+```
+
+```{r alegrid10_2,  fig.height=4}
+ale1 <- model_profile(explainer, variables = "duration", type = "accumulated", N = 500, grid_points = 10)
+ale2 <- model_profile(explainer, variables = "age", type = "accumulated", N = 500, grid_points = 10)
+ale3 <- model_profile(explainer, variables = "credit_amount", type = "accumulated", N = 500, grid_points = 10)
+
+plot(ale1, ale2, ale3)
+```
+
+```{r alegrid10_3,  fig.height=4}
+ale1 <- model_profile(explainer, variables = "duration", type = "accumulated", N = NULL, grid_points = 10)
+ale2 <- model_profile(explainer, variables = "age", type = "accumulated", N = NULL, grid_points = 10)
+ale3 <- model_profile(explainer, variables = "credit_amount", type = "accumulated", N = NULL, grid_points = 10)
+
+plot(ale1, ale2, ale3)
+```
+
+```{r alegrid100_1,  fig.height=4}
+ale1 <- model_profile(explainer, variables = "duration", type = "accumulated", N = 50, grid_points = 100)
+ale2 <- model_profile(explainer, variables = "age", type = "accumulated", N = 50, grid_points = 100)
+ale3 <- model_profile(explainer, variables = "credit_amount", type = "accumulated", N = 50, grid_points = 100)
+
+plot(ale1, ale2, ale3)
+```
+
+```{r alegrid100_2,  fig.height=4}
+ale1 <- model_profile(explainer, variables = "duration", type = "accumulated", N = 500, grid_points = 100)
+ale2 <- model_profile(explainer, variables = "age", type = "accumulated", N = 500, grid_points = 100)
+ale3 <- model_profile(explainer, variables = "credit_amount", type = "accumulated", N = 500, grid_points = 100)
+
+plot(ale1, ale2, ale3)
+```
+
+```{r alegrid100_3,  fig.height=4}
+ale1 <- model_profile(explainer, variables = "duration", type = "accumulated", N = NULL, grid_points = 100)
+ale2 <- model_profile(explainer, variables = "age", type = "accumulated", N = NULL, grid_points = 100)
+ale3 <- model_profile(explainer, variables = "credit_amount", type = "accumulated", N = NULL, grid_points = 100)
+
+plot(ale1, ale2, ale3)
+```
+
+```{r alegrid1000_1,  fig.height=4}
+ale1 <- model_profile(explainer, variables = "duration", type = "accumulated", N = 50, grid_points = 1000)
+ale2 <- model_profile(explainer, variables = "age", type = "accumulated", N = 50, grid_points = 1000)
+ale3 <- model_profile(explainer, variables = "credit_amount", type = "accumulated", N = 50, grid_points = 1000)
+
+plot(ale1, ale2, ale3)
+```
+
+```{r alegrid1000_2,  fig.height=4}
+ale1 <- model_profile(explainer, variables = "duration", type = "accumulated", N = 500, grid_points = 1000)
+ale2 <- model_profile(explainer, variables = "age", type = "accumulated", N = 500, grid_points = 1000)
+ale3 <- model_profile(explainer, variables = "credit_amount", type = "accumulated", N = 500, grid_points = 1000)
+
+plot(ale1, ale2, ale3)
+```
+
+```{r alegrid1000_3,  fig.height=4}
+ale1 <- model_profile(explainer, variables = "duration", type = "accumulated", N = NULL, grid_points = 1000)
+ale2 <- model_profile(explainer, variables = "age", type = "accumulated", N = NULL, grid_points = 1000)
+ale3 <- model_profile(explainer, variables = "credit_amount", type = "accumulated", N = NULL, grid_points = 1000)
+
+plot(ale1, ale2, ale3)
+```
+
+Jak widać parametr N czyli liczba obserwacji wziętych do wyjaśnienia nie zmienia prawie w ogóle kształtu krzywej. Niekedy przesuwa on wykres do góry lub w dół jednak nie widać tam żadnych zależności. Na kształt predykcji wpływa jednak znacząco parametr grid_points. Im więcej punktów, tym większa dokładność predykcji - wykres ma 'zęby' i jest mniej zbliżony do gładkiej krzywej. Zależności te zachodzą zarówno dla PDP jak i ALE
