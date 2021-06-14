@@ -148,7 +148,7 @@ Warszataty Badawcze składają się z:
 ### Schemat oceniania (suma 100 pkt):
 
 -   raport końcowy - 40 pkt.
-	- wstęp, motywacja [0-8 punktów]
+	- wstęp, motywacja, abstrakt [0-8 punktów]
 	- literatura [0-4 punktów]
 	- główne wyniki pracy [0-16 punktów]
 	- wnioski [0-8 punktów]  
