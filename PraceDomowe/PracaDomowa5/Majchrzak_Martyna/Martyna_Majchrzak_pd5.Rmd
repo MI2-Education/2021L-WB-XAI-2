@@ -1,0 +1,190 @@
+---
+title: "Praca domowa 5"
+author: "Martyna Majchrzak"
+date: "20 05 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, cache=TRUE)
+library(OpenML)
+library(mlr)
+library(DALEX)
+library(DALEXtra)
+library(knitr)
+library(ranger)
+library(mice)
+set.seed(1)
+diabetes <- getOMLDataSet(data.id = 37L)
+diabetes <- diabetes$data
+```
+
+```{r}
+diabetes_NA<-diabetes
+diabetes_NA[diabetes_NA == 0] <- NA
+diabetes_NA$preg[is.na(diabetes_NA$preg)] <- 0
+diabetes_NA$insu[is.na(diabetes_NA$insu)] <- 0
+diabetes_NA$class<-as.factor(as.numeric(diabetes_NA$class)-1)
+```
+
+```{r sample}
+m <- sample(1:nrow(diabetes_NA), 0.7*nrow(diabetes_NA))
+diabetes_NA_train <- diabetes_NA[m,]
+diabetes_NA_test <- diabetes_NA[-m,]
+
+```
+
+```{r skip, include=FALSE}
+# train
+diabetes_train_skip<-diabetes_NA_train[,-c(3,4,5)]
+imp_train2 <- mice(diabetes_train_skip, method = "pmm", m = 1, maxit = 1, nnet.MaxNWts=3000)
+diabetes_train_skip <- mice::complete(imp_train2)
+
+#test
+diabetes_test_skip<-diabetes_NA_test[,-c(3,4,5)]
+imp_test2 <- mice(diabetes_test_skip, method = "pmm", m = 1, maxit = 1, nnet.MaxNWts=3000)
+diabetes_test_skip <- mice::complete(imp_test2)
+
+# displaying dataset dimensions
+dim(diabetes_train_skip)
+dim(diabetes_test_skip)
+
+```
+
+## Zbiór danych
+
+Zbiór danych Diabetes zawiera informacje o osobach chorych na cukrzycę.
+Użyjemy wersji skip z pominiętymi 3 najmniej istotnymi zmiennymi.
+
+1. preg - ile razy dana osoba była w ciąży
+2. plas - stężenie glukozy w osoczu po 2h ustnego testu na tolerancję glukozy
+3. mass - index masy ciała BMI (waga w kg/(wzrost w m)^2)
+4. pedi - obciążenie genetyczne (Diabetes pedigree function)
+5. age - wiek (lata)
+6. class - zmienna celu o wartościach tested_negative oraz tested_positive
+
+## Rozkłady zmiennych
+
+```{r zmienne, fig.height=6, fig.width=9}
+library(ggplot2)
+library(gridExtra)
+variables <- names(diabetes_train_skip)
+
+plots <- lapply(variables, function(variable){
+  ggplot(data=diabetes, aes_string(variable)) +
+    geom_bar(fill='darkred') +
+    ylab('')
+})
+
+grid.arrange(grobs=plots, ncol=3)
+```
+
+## Model Ranger
+
+```{r}
+classif_task_ranger <- makeClassifTask(id = "ranger_tune_random", data = diabetes_train_skip, target = "class")
+classif_lrn_ranger <- makeLearner("classif.ranger", predict.type = "prob", par.vals = list(num.trees=776, mtry=1, min.node.size=8, splitrule="extratrees"))
+model_skip_ranger<- mlr::train(classif_lrn_ranger, classif_task_ranger)
+pred_ranger <- predict(model_skip_ranger, newdata = diabetes_test_skip)$data
+explainer_ranger <- explain(id= 'ranger', model = model_skip_ranger,
+                     data = diabetes_test_skip[,-6],
+                     y = as.numeric(as.character(diabetes_test_skip$class)),
+                     colorize = FALSE)
+```
+
+## Model Adaboost
+
+```{r}
+classif_task <- makeClassifTask(id = "ada_tune_random", data = diabetes_train_skip, target = "class")
+classif_lrn <- makeLearner("classif.ada", predict.type = "prob", par.vals = list(loss='logistic', type='discrete', iter=81, max.iter=3, minsplit=45, minbucket=4, maxdepth=1))
+model_random_skip_ada<- mlr::train(classif_lrn, classif_task)
+explainer_ada <- explain(id='Ada', model = model_random_skip_ada,
+                     data = diabetes_test_skip[,-6],
+             y = as.numeric(as.character(diabetes_test_skip$class)),
+             colorize = FALSE)
+
+```
+
+
+## Partial Dependence Profiles (PDP)
+
+The partial dependence plot (short PDP or PD plot) shows the marginal effect features have on the predicted outcome of a machine learning model. A partial dependence plot can show whether the relationship between the target and a feature is linear, monotonic or more complex.
+
+### Number of observations 
+
+Let's compare how the Dependence Profile changes depending on the number of observations used for calculation of aggregated profiles
+
+```{r, fig.height=6, fig.width=9}
+pdp_1 <- model_profile(explainer_ranger, type="partial", N = 100)
+pdp_1$agr_profiles$`_label_` <- "ranger, 100 observations"
+pdp_2 <- model_profile(explainer_ranger, type="partial", N = 250)
+pdp_2$agr_profiles$`_label_` <- "ranger, 250 observations"
+pdp_3 <- model_profile(explainer_ranger, type="partial", N = 537)
+pdp_3$agr_profiles$`_label_` <- "ranger, all observations"
+
+plot(pdp_1, pdp_2, pdp_3)
+```
+The number of used observations seems to have no influence on the shape of the profile.
+
+### Grid points
+
+Now the comparison of PDP depending on the number of grid points
+ 
+```{r, fig.height=6, fig.width=9}
+pdp_1 <- model_profile(explainer_ranger, type='partial', grid_points = 100)
+pdp_1$agr_profiles$`_label_` <- "ranger, 100 points"
+pdp_2 <- model_profile(explainer_ranger, type='partial', grid_points = 500)
+pdp_2$agr_profiles$`_label_` <- "ranger, 500 points"
+pdp_3 <- model_profile(explainer_ranger, type='partial',grid_points = 1000)
+pdp_3$agr_profiles$`_label_` <- "ranger, 1000 points"
+
+plot(pdp_1, pdp_2, pdp_3)
+```
+The profiles differ in shape very slightly, the only noticeble difference is in the `mass` for values above 50 (very obese patients) and `preg` variables,  for values above 10 (patients, that have in pregnant more than 10 times). More grind points tend to make the plot more detaited.
+
+
+### Ranger & Ada comparison
+
+Now let's see the difference between PDP for model Ranger and model Ada, as well as the difference between normal and uniform variable split type.
+
+```{r, fig.height=6, fig.width=9}
+pdp_1 <- model_profile(explainer_ranger,  N = 100, grid_points = 500)
+pdp_1$agr_profiles$`_label_` <- "ranger"
+
+pdp_2 <- model_profile(explainer_ranger,  N = 100, grid_points = 500, variable_splits_type = "uniform")
+pdp_2$agr_profiles$`_label_` <- "ranger uniform"
+
+pdp_3 <- model_profile(explainer_ada,  N = 100, grid_points = 500)
+pdp_3$agr_profiles$`_label_` <- "ada"
+
+pdp_4 <- model_profile(explainer_ada,  N = 100, grid_points = 500, variable_splits_type = "uniform")
+pdp_4$agr_profiles$`_label_` <- "ada uniform"
+plot(pdp_1, pdp_2, pdp_3, pdp_4)
+```
+The difference between variable split types is again visible only for big values of `mass` and `preg` variables. 
+The PDP's for models, however, look very different - the Ranger one is smooth, whereas the Ada one is more angular. This is the effect of the differences in the construction of the models.
+
+## Accumulated Local Dependence (ALE)
+
+Accumulated local Dependence describe how features influence the prediction of a machine learning model on average. ALE plots are a faster and unbiased alternative to PDPs.
+
+```{r}
+pdp_1 <- model_profile(explainer_ranger, type="partial")
+pdp_1$agr_profiles$`_label_` <- "ranger"
+ale_1 <- model_profile(explainer_ranger, type="accumulated")
+ale_1$agr_profiles$`_label_` <- "ranger ale"
+plot(pdp_1, ale_1)
+
+```
+
+The differences can be seen in the `age` and `preg` - variables. For Accumulated Local Dependence the shape of the profile is roughly the same, but the average predictions tends to be a slightly lower.
+
+```{r, fig.height=6, fig.width=9}
+pdp_1 <- model_profile(explainer_ada, type="partial")
+pdp_1$agr_profiles$`_label_` <- "ada"
+ale_1 <- model_profile(explainer_ada, type="accumulated")
+ale_1$agr_profiles$`_label_` <- "ada ale"
+plot(pdp_1, ale_1)
+```
+
+Interestingly, for Ada model the ALE profiles differ form PDP in the rest of variables - `mass`, `pedi` and `plas`. Contary to the ranger model, the average prediction in ALE in higher than the PDP.
